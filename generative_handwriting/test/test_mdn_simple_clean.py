@@ -1,35 +1,31 @@
 import os
+
+import matplotlib.pyplot as plt
+import numpy as np
+import tensorflow as tf
 from common import (
     create_gif,
     create_subsequence_batches,
     plot_strokes_from_dx_dy,
     prepare_data_for_sequential_prediction,
 )
-from loader import HandwritingDataLoader
-from model.mixture_density_network import mdn_loss
-from model.handwriting_models import (
-    DeepHandwritingPredictionModel,
-)
-from tensorflow.keras.callbacks import Callback
-import matplotlib.pyplot as plt
-
-import tensorflow as tf
-import numpy as np
-
 from constants import (
     ADAM_CLIP_NORM,
     LEARNING_RATE,
     NUM_LSTM_CELLS_PER_HIDDEN_LAYER,
     NUM_LSTM_HIDDEN_LAYERS,
-    TEST_NUM_EPOCHS,
     TEST_BATCH_SIZE,
+    TEST_NUM_EPOCHS,
     TEST_NUM_MIXTURES,
 )
-
-
-strokes, stroke_lengths = HandwritingDataLoader().load_individual_stroke_data(
-    "a01/a01-000/a01-000u-01.xml"
+from loader import HandwritingDataLoader
+from model.handwriting_models import (
+    DeepHandwritingPredictionModel,
 )
+from model.mixture_density_network import mdn_loss
+from tensorflow.keras.callbacks import Callback
+
+strokes, stroke_lengths = HandwritingDataLoader().load_individual_stroke_data("a01/a01-000/a01-000u-01.xml")
 # plot_original_strokes_from_xml("a01/a01-000/a01-000u-01.xml")
 reconstructed_data = plot_strokes_from_dx_dy(strokes, show_image=False)
 x_stroke, y_stroke = prepare_data_for_sequential_prediction(strokes)
@@ -38,16 +34,10 @@ x_stroke, y_stroke = prepare_data_for_sequential_prediction(strokes)
 sequence_length = 50
 desired_epochs = 200
 
-x_train_stroke, y_train_stroke = create_subsequence_batches(
-    x_stroke, y_stroke, sequence_length
-)
+x_train_stroke, y_train_stroke = create_subsequence_batches(x_stroke, y_stroke, sequence_length)
 x_train_stroke, y_train_stroke = x_train_stroke[4, :, :], y_train_stroke[4, :, :]
-x_train_stroke = np.reshape(
-    x_train_stroke, (1, x_train_stroke.shape[0], x_train_stroke.shape[1])
-)
-y_train_stroke = np.reshape(
-    y_train_stroke, (1, y_train_stroke.shape[0], y_train_stroke.shape[1])
-)
+x_train_stroke = np.reshape(x_train_stroke, (1, x_train_stroke.shape[0], x_train_stroke.shape[1]))
+y_train_stroke = np.reshape(y_train_stroke, (1, y_train_stroke.shape[0], y_train_stroke.shape[1]))
 
 # Plot inputs vs targets
 plt.figure(figsize=(12, 8))
@@ -89,9 +79,7 @@ stroke_model = DeepHandwritingPredictionModel(
 )
 
 stroke_model.compile(
-    optimizer=tf.keras.optimizers.Adam(
-        learning_rate=LEARNING_RATE * 2, clipnorm=ADAM_CLIP_NORM
-    ),
+    optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE * 2, clipnorm=ADAM_CLIP_NORM),
     loss=lambda x, y: mdn_loss(x, y, None, num_mixture_components),
 )
 
@@ -115,9 +103,7 @@ class PostTrainingVisualizeCallback(Callback):
                 # Convert dx, dy in x_test to absolute coordinates
                 dx_dy_real = x_test[i, :, :2]  # Ignoring eos
                 abs_coords_real = np.cumsum(dx_dy_real, axis=0)
-                abs_coords_real = np.vstack(
-                    ([0, 0], abs_coords_real)
-                )  # Assuming start at (0, 0)
+                abs_coords_real = np.vstack(([0, 0], abs_coords_real))  # Assuming start at (0, 0)
 
                 # Plot real data
                 plt.plot(
@@ -129,9 +115,7 @@ class PostTrainingVisualizeCallback(Callback):
                 )
                 print("dx_dy_real", dx_dy_real.shape)
 
-                for t in range(
-                    1, len(dx_dy_real)
-                ):  # Start at 1 because we need a 'next' point
+                for t in range(1, len(dx_dy_real)):  # Start at 1 because we need a 'next' point
                     # The last known point at time t
                     last_known_point = abs_coords_real[t - 1]
                     # The actual next point
@@ -155,21 +139,17 @@ class PostTrainingVisualizeCallback(Callback):
                         plt.scatter(
                             last_known_point[0] + mu1,
                             last_known_point[1] + mu2,
-                            label=(
-                                f"Mixture {j+1} Mean at Timestep {t-1}"
-                                if t == 1
-                                else ""
-                            ),
+                            label=(f"Mixture {j + 1} Mean at Timestep {t - 1}" if t == 1 else ""),
                             alpha=0.5,
                             zorder=4,
                         )  # Adjust zorder for visibility, alpha for transparency
 
-                plt.title(f"Sequence {i+1} Prediction vs Real Path")
+                plt.title(f"Sequence {i + 1} Prediction vs Real Path")
                 plt.xlabel("X Coordinate")
                 plt.ylabel("Y Coordinate")
                 # Only show the legend once per mixture component
                 handles, labels = plt.gca().get_legend_handles_labels()
-                by_label = dict(zip(labels, handles))
+                by_label = dict(zip(labels, handles, strict=False))
                 plt.legend(by_label.values(), by_label.keys())
                 filename = f"mdn_prediction_{epoch}.png"
                 filepath = os.path.join(self.save_dir, filename)
@@ -183,9 +163,7 @@ stroke_model.fit(
     batch_size=TEST_BATCH_SIZE,
     verbose=1,
     callbacks=[
-        PostTrainingVisualizeCallback(
-            test_data=(x_train_stroke, y_train_stroke), plot_frequency=10
-        ),
+        PostTrainingVisualizeCallback(test_data=(x_train_stroke, y_train_stroke), plot_frequency=10),
     ],
 )
 

@@ -1,3 +1,4 @@
+import numpy as np
 from common import (
     create_subsequence_batches,
     plot_strokes_from_dx_dy,
@@ -5,11 +6,8 @@ from common import (
 )
 from constants import LEARNING_RATE, TEST_NUM_MIXTURES
 from loader import HandwritingDataLoader
-import numpy as np
 
-strokes, stroke_lengths = HandwritingDataLoader().load_individual_stroke_data(
-    "a01/a01-000/a01-000u-01.xml"
-)
+strokes, stroke_lengths = HandwritingDataLoader().load_individual_stroke_data("a01/a01-000/a01-000u-01.xml")
 # plot_original_strokes_from_xml("a01/a01-000/a01-000u-01.xml")
 reconstructed_data = plot_strokes_from_dx_dy(strokes, show_image=False)
 

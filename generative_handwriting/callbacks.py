@@ -1,7 +1,7 @@
 import os
-from common import print_model_parameters
-import numpy as np
 
+import numpy as np
+from common import print_model_parameters
 from tensorflow.keras.callbacks import Callback, ModelCheckpoint
 
 
@@ -20,17 +20,13 @@ class ExtendedModelCheckpoint(ModelCheckpoint):
         model_dir = os.path.join(self.base_dir, "saved_models", model_name)
         os.makedirs(model_dir, exist_ok=True)
         filepath = os.path.join(model_dir, "best_model.keras")
-        super().__init__(
-            filepath, save_best_only=True, monitor="loss", mode="min", **kwargs
-        )
+        super().__init__(filepath, save_best_only=True, monitor="loss", mode="min", **kwargs)
         self.last_best = None
 
     def on_epoch_end(self, epoch: int, logs=None) -> None:
         current_loss = logs.get("loss")
         if self.last_best is None or current_loss < self.last_best:
-            print(
-                f"\nEpoch {epoch+1}: Loss improved from {self.last_best} to {current_loss}, saving model."
-            )
+            print(f"\nEpoch {epoch + 1}: Loss improved from {self.last_best} to {current_loss}, saving model.")
             self.last_best = current_loss
         super().on_epoch_end(epoch, logs)
 
@@ -48,7 +44,7 @@ class ModelCheckpointWithPeriod(ModelCheckpoint):
     def on_epoch_end(self, epoch: int, logs=None) -> None:
         # Adjusting to ensure it saves on epoch 1 then every 'period' epochs thereafter
         if (epoch + 1) % self.period == 0 or epoch == 0:
-            print(f"\nEpoch {epoch+1}: Saving model.")
+            print(f"\nEpoch {epoch + 1}: Saving model.")
             super().on_epoch_end(epoch, logs)
 
 
@@ -85,12 +81,13 @@ class HandwritingVisualizeCallback(Callback):
 
         We'll grab a single sequence and plot the input data and the predicted data as a heatmap for each point.
         """
-        print(f"Epoch {epoch}")
-        predictions = self.model.predict(self.input_data)
-        input_batch = self.input_data[0]
-        predictions = predictions[0]
-        input_sequence = input_batch[0]
-        predicted_sequence = predictions[0]
+        pass
+        # print(f"Epoch {epoch}")
+        # predictions = self.model.predict(self.input_data)
+        # input_batch = self.input_data[0]
+        # predictions = predictions[0]
+        # input_sequence = input_batch[0]
+        # predicted_sequence = predictions[0]
 
         # Convert the MDN parameters to bivariate Gaussian distributions
         # We'll have to grab the parameters for each point in the sequence

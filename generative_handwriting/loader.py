@@ -5,12 +5,7 @@ from typing import Optional, Set, Tuple
 import drawing
 import numpy as np
 from alphabet import encode_ascii
-from constants import (
-    MAX_CHAR_LEN,
-    MAX_STROKE_LEN,
-    STROKE_SCALE_FACTOR,
-    STROKE_SPACE_THRESHOLD,
-)
+from constants import MAX_CHAR_LEN, MAX_STROKE_LEN, STROKE_SCALE_FACTOR, STROKE_SPACE_THRESHOLD
 from tqdm import tqdm
 
 
@@ -74,7 +69,7 @@ class HandwritingDataLoader:
             self.test_set,
         ]
 
-        for dataset_name, filename_set in zip(dataset_names, filename_sets):
+        for dataset_name, filename_set in zip(dataset_names, filename_sets, strict=False):
             strokes, stroke_lens, trans, trans_lens = self._load_data(filename_set)
             self._save_data(strokes, stroke_lens, trans, trans_lens, dataset_name)
 
@@ -112,7 +107,7 @@ class HandwritingDataLoader:
         file_paths = []
 
         # Collect all file paths first to get a total count for the progress bar
-        for dirpath, dirnames, files in os.walk(os.path.join(self.curr_dir, self.data_dir)):
+        for dirpath, _dirnames, files in os.walk(os.path.join(self.curr_dir, self.data_dir)):
             for file_name in filter(lambda f: f.endswith(".xml"), files):
                 if "z01-000z" in file_name:
                     continue

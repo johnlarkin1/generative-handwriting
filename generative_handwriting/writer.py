@@ -272,7 +272,7 @@ class Calligrapher:
 
         # Draw strokes
         initial_y_offset = line_height
-        for stroke, color, width in zip(strokes, stroke_colors, stroke_widths):
+        for stroke, color, width in zip(strokes, stroke_colors, stroke_widths, strict=False):
             self._draw_stroke(dwg, stroke, initial_y_offset, color, width, show_endpoints)
             initial_y_offset += line_height
 

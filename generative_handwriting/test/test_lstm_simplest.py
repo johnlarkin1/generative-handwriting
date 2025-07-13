@@ -1,6 +1,5 @@
 from common import create_gif
 
-
 USE_DUMMY_LSTM = False
 
 

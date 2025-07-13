@@ -1,24 +1,29 @@
 import os
+
+import numpy as np
+import tensorflow as tf
+from callbacks import ExtendedModelCheckpoint
 from common import (
     plot_strokes_from_dx_dy,
     prepare_data_for_sequential_prediction,
 )
-from model_io import load_model_if_exists
-from plotting import generate_and_plot_heatmap
-from loader import HandwritingDataLoader
-from model.mixture_density_network import mdn_loss
-from model.handwriting_models import DeepHandwritingPredictionModel
-
-import tensorflow as tf
-import numpy as np
-
 from constants import (
     LEARNING_RATE,
 )
-from callbacks import ExtendedModelCheckpoint
+from loader import HandwritingDataLoader
+from model.handwriting_models import DeepHandwritingPredictionModel
+from model.mixture_density_network import mdn_loss
+from model_io import load_model_if_exists
+from plotting import generate_and_plot_heatmap
 
-model_save_dir = "/Users/johnlarkin/Documents/coding/generative-handwriting/src/saved_models/handwriting_prediction_single_batch_subset/"
-model_pred_dir = "/Users/johnlarkin/Documents/coding/generative-handwriting/handwriting_visualizations/single_stroke_single_batch_subset/"
+model_save_dir = (
+    "/Users/johnlarkin/Documents/coding/generative-handwriting/src/saved_models/"
+    "handwriting_prediction_single_batch_subset/"
+)
+model_pred_dir = (
+    "/Users/johnlarkin/Documents/coding/generative-handwriting/"
+    "handwriting_visualizations/single_stroke_single_batch_subset/"
+)
 model_save_path = os.path.join(model_save_dir, "best_model.keras")
 epochs_info_path = os.path.join(model_save_dir, "epochs_info.json")
 
@@ -29,9 +34,7 @@ def model_mdn_loss(actual, outputs):
 
 
 desired_epochs = 1000
-strokes, stroke_lengths = HandwritingDataLoader().load_individual_stroke_data(
-    "a01/a01-000/a01-000u-01.xml"
-)
+strokes, stroke_lengths = HandwritingDataLoader().load_individual_stroke_data("a01/a01-000/a01-000u-01.xml")
 # plot_original_strokes_from_xml("a01/a01-000/a01-000u-01.xml")
 reconstructed_data = plot_strokes_from_dx_dy(strokes, show_image=False)
 
@@ -52,9 +55,7 @@ stroke_model, is_success = load_model_if_exists(
 )
 
 if not is_success:
-    stroke_model = DeepHandwritingPredictionModel(
-        num_mixture_components=num_mixture_components
-    )
+    stroke_model = DeepHandwritingPredictionModel(num_mixture_components=num_mixture_components)
     learning_rate_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
         initial_learning_rate, decay_steps=100000, decay_rate=0.96, staircase=True
     )

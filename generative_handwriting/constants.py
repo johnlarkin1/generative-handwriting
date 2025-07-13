@@ -1,5 +1,5 @@
 """
-This module provides various hyper parameters and also 
+This module provides various hyper parameters and also
 architecture constraints similar to Graves's paper.
 """
 

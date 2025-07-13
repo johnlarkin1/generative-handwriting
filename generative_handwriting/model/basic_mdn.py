@@ -1,5 +1,5 @@
-import tensorflow as tf
 import numpy as np
+import tensorflow as tf
 from constants import EPSILON
 
 
@@ -47,9 +47,7 @@ def mdn_loss_function(actual, model_outputs, num_mixtures):
     expanded_actual = tf.expand_dims(actual, 1)  # Shape: [batch_size, 1, 2]
 
     # Calculate the PDF for each mixture component
-    pdf_vals = gaussian_pdf(
-        expanded_actual, means, stds
-    )  # Shape: [batch_size, num_mixtures]
+    pdf_vals = gaussian_pdf(expanded_actual, means, stds)  # Shape: [batch_size, num_mixtures]
 
     # Weighted sum of PDFs for each mixture component
     weighted_pdf = tf.reduce_sum(weights * pdf_vals, axis=-1)  # Shape: [batch_size]

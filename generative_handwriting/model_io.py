@@ -1,9 +1,8 @@
-from typing import Any
-from model.handwriting_models import DeepHandwritingPredictionModel
-from model.mixture_density_network import MixtureDensityLayer
-import tensorflow as tf
 import json
 import os
+from typing import Any
+
+import tensorflow as tf
 
 
 def load_model_if_exists(model_save_path, custom_objects: dict[str, Any]):

@@ -1,11 +1,9 @@
 import os
-from common import (
-    mdn_to_heatmap,
-)
-import matplotlib.pyplot as plt
 
-import tensorflow as tf
+import matplotlib.pyplot as plt
 import numpy as np
+import tensorflow as tf
+from common import mdn_to_heatmap
 
 
 def plot_predictions_through_sequence(
@@ -27,28 +25,18 @@ def plot_predictions_through_sequence(
     buffer = 5
 
     # Iterate through the desired sequence indices
-    for seq_index in range(
-        sequence_length, len(full_reconstructed_data) - sequence_length
-    ):
+    for seq_index in range(sequence_length, len(full_reconstructed_data) - sequence_length):
         # Extract the MDN parameters for the current subsequence index
-        last_step_output = full_sequence_prediction[
-            :, seq_index - 1, :
-        ]  # seq_index-1 because it's zero-indexed
+        last_step_output = full_sequence_prediction[:, seq_index - 1, :]  # seq_index-1 because it's zero-indexed
 
         # Establish the range of x and y to plot, including a buffer
         x_min, x_max = (
-            full_reconstructed_data[seq_index - sequence_length : seq_index, 0].min()
-            - buffer,
-            full_reconstructed_data[
-                seq_index - sequence_length : seq_index + 10, 0
-            ].max()
-            + buffer,
+            full_reconstructed_data[seq_index - sequence_length : seq_index, 0].min() - buffer,
+            full_reconstructed_data[seq_index - sequence_length : seq_index + 10, 0].max() + buffer,
         )
         y_min, y_max = (
-            full_reconstructed_data[seq_index - sequence_length : seq_index, 1].min()
-            - buffer,
-            full_reconstructed_data[seq_index - sequence_length : seq_index, 1].max()
-            + buffer,
+            full_reconstructed_data[seq_index - sequence_length : seq_index, 1].min() - buffer,
+            full_reconstructed_data[seq_index - sequence_length : seq_index, 1].max() + buffer,
         )
         last_known_point = full_reconstructed_data[seq_index - 1, :2]
 
@@ -56,9 +44,7 @@ def plot_predictions_through_sequence(
         grid_y = np.linspace(y_min, y_max, 50)
 
         # Generate the heatmap data from the model's predicted output
-        pdf_total = mdn_to_heatmap(
-            last_step_output, num_components, grid_x, grid_y, last_known_point
-        )
+        pdf_total = mdn_to_heatmap(last_step_output, num_components, grid_x, grid_y, last_known_point)
 
         # Plotting
         print(f"Plotting sequence index {seq_index}")
@@ -152,7 +138,7 @@ def generate_and_plot_heatmap(
     min_y, max_y = np.min(reconstructed_data[:, 1]), np.max(reconstructed_data[:, 1])
 
     # Initialize an empty aggregate heatmap
-    aggregate_heatmap = np.zeros((grid_size, grid_size))
+    _aggregate_heatmap = np.zeros((grid_size, grid_size))
 
     cum_mu1 = np.cumsum(model_output[:, num_components : num_components * 2])
     cum_mu2 = np.cumsum(model_output[:, num_components * 2 : num_components * 3])
@@ -190,13 +176,13 @@ def generate_and_plot_heatmap_full(
     predictions = model(x_stroke, chars, char_len, training=False)
     print("predictions.shape", predictions.shape)
     model_output = predictions[0]  # Assuming model.predict returns batch first
-    print('model_output', model_output)
+    print("model_output", model_output)
 
     min_x, max_x = np.min(reconstructed_data[:, 0]), np.max(reconstructed_data[:, 0])
     min_y, max_y = np.min(reconstructed_data[:, 1]), np.max(reconstructed_data[:, 1])
 
     # Initialize an empty aggregate heatmap
-    aggregate_heatmap = np.zeros((grid_size, grid_size))
+    _aggregate_heatmap = np.zeros((grid_size, grid_size))
 
     cum_mu1 = np.cumsum(model_output[:, num_components : num_components * 2])
     cum_mu2 = np.cumsum(model_output[:, num_components * 2 : num_components * 3])

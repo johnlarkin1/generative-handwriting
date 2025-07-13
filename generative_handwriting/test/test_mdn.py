@@ -1,11 +1,9 @@
-from model.mixture_density_network import MDNLayer, mdn_loss
+import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
-import matplotlib.pyplot as plt
-
+from model.mixture_density_network import MDNLayer, mdn_loss
+from tensorflow.keras.layers import LSTM, Input
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Input
-from tensorflow.keras.layers import LSTM
 
 SEQUENCE_LENGTH = 5
 
@@ -46,23 +44,19 @@ class MDNHeatmapCallback(tf.keras.callbacks.Callback):
             ],
             axis=-1,
         )
-        pi = pi[
-            ..., 0
-        ]  # Assuming we're just visualizing the first time step for simplicity
+        pi = pi[..., 0]  # Assuming we're just visualizing the first time step for simplicity
 
         # We will simplify by visualizing the distribution as if each component is independent
         # This is a simplification and does not take into account the correlations
         y = np.linspace(-1.5, 1.5, self.num_points)
         heatmap = np.zeros((self.num_points, len(self.x_test)))
 
-        for i, (pi_i, mu1_i, sigma1_i) in enumerate(zip(pi, mu1, sigma1)):
+        for i, (pi_i, mu1_i, sigma1_i) in enumerate(zip(pi, mu1, sigma1, strict=False)):
             for j, y_val in enumerate(y):
                 # For each component, calculate the probability density
                 pdf_components = [
-                    pi_ij
-                    * (1 / (np.sqrt(2 * np.pi) * sigma1_ij))
-                    * np.exp(-0.5 * ((y_val - mu1_ij) / sigma1_ij) ** 2)
-                    for pi_ij, mu1_ij, sigma1_ij in zip(pi_i, mu1_i, sigma1_i)
+                    pi_ij * (1 / (np.sqrt(2 * np.pi) * sigma1_ij)) * np.exp(-0.5 * ((y_val - mu1_ij) / sigma1_ij) ** 2)
+                    for pi_ij, mu1_ij, sigma1_ij in zip(pi_i, mu1_i, sigma1_i, strict=False)
                 ]
 
                 # Sum the contributions from all mixture components to get the total probability density at this point
@@ -93,9 +87,7 @@ class MDNHeatmapCallback(tf.keras.callbacks.Callback):
         plt.show()
 
 
-def generate_synthetic_data(
-    num_sequences=1000, seq_length=SEQUENCE_LENGTH, batch_size=32
-):
+def generate_synthetic_data(num_sequences=1000, seq_length=SEQUENCE_LENGTH, batch_size=32):
     sequences = []
     for _ in range(num_sequences):
         start_x = np.random.uniform(-10, 10)

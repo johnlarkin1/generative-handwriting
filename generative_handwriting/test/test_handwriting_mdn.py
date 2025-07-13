@@ -1,5 +1,7 @@
-import tensorflow as tf
 import numpy as np
+import tensorflow as tf
+
+from generative_handwriting.model.mixture_density_network import mdn_loss
 
 
 def test_mdn_loss():

@@ -240,7 +240,7 @@ class DeepHandwritingSynthesisModel(tf.keras.Model):
         gradients = tape.gradient(loss, self.trainable_variables)
         clipped_grads_and_vars = [
             (tf.clip_by_value(g, -1 * self.gradient_clip_value, self.gradient_clip_value), v_)
-            for g, v_ in zip(gradients, self.trainable_variables)
+            for g, v_ in zip(gradients, self.trainable_variables, strict=False)
         ]
 
         self.optimizer.apply_gradients(clipped_grads_and_vars)

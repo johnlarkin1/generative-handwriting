@@ -90,9 +90,9 @@ if __name__ == "__main__":
             gradients = tape.gradient(loss, stroke_model.trainable_variables)
             clipped = [
                 (tf.clip_by_value(g, -GRADIENT_CLIP_VALUE, GRADIENT_CLIP_VALUE), v_)
-                for g, v_ in zip(gradients, stroke_model.trainable_variables)
+                for g, v_ in zip(gradients, stroke_model.trainable_variables, strict=False)
             ]
-            optimizer.apply_gradients(zip(gradients, stroke_model.trainable_variables))
+            optimizer.apply_gradients(zip(gradients, stroke_model.trainable_variables, strict=False))
             epoch_losses.append(loss.numpy())
 
             if epoch == 0 and step == 0:

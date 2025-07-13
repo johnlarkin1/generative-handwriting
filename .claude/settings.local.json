@@ -3,7 +3,10 @@
     "allow": [
       "Bash(find:*)",
       "Bash(uv lock:*)",
-      "Bash(uv sync:*)"
+      "Bash(uv sync:*)",
+      "Bash(ruff check:*)",
+      "Bash(ruff:*)",
+      "Bash(python -m py_compile:*)"
     ],
     "deny": []
   }

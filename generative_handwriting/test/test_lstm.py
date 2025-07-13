@@ -1,6 +1,6 @@
-from model.handwriting_models import SimpleLSTMModel
 import numpy as np
 import tensorflow as tf
+from model.handwriting_models import SimpleLSTMModel
 
 # A small synthetic sequential dataset
 data_size, sequence_length, feature_size = 100, 10, 3

@@ -4,8 +4,8 @@ https://github.com/sjvasquez/handwriting-synthesis/blob/master/drawing.py#L80
 """
 
 import numpy as np
-from scipy.signal import savgol_filter
 from scipy.interpolate import interp1d
+from scipy.signal import savgol_filter
 
 
 def denoise(coords):
@@ -72,9 +72,7 @@ def coords_to_offsets(coords):
     """
     convert from coordinates to offsets
     """
-    offsets = np.concatenate(
-        [coords[1:, :2] - coords[:-1, :2], coords[1:, 2:3]], axis=1
-    )
+    offsets = np.concatenate([coords[1:, :2] - coords[:-1, :2], coords[1:, 2:3]], axis=1)
     offsets = np.concatenate([np.array([[0, 0, 1]]), offsets], axis=0)
     return offsets
 

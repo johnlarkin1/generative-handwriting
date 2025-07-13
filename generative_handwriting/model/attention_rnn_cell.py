@@ -44,27 +44,19 @@ class AttentionRNNCell(tf.keras.layers.Layer):
 
         # LSTM layer 1
         s1_in = tf.concat([w, x_t], axis=1)
-        s1_out, [s1_state_h_new, s1_state_c_new] = self.lstm_cells[0](
-            s1_in, [s1_state_h, s1_state_c]
-        )
+        s1_out, [s1_state_h_new, s1_state_c_new] = self.lstm_cells[0](s1_in, [s1_state_h, s1_state_c])
 
         # Attention
         attention_inputs = tf.concat([w, x_t, s1_out], axis=1)
-        w_new, kappa_new = self.attention_mechanism(
-            attention_inputs, kappa, self.char_seq_one_hot, self.char_seq_len
-        )
+        w_new, kappa_new = self.attention_mechanism(attention_inputs, kappa, self.char_seq_one_hot, self.char_seq_len)
 
         # LSTM layer 2
         s2_in = tf.concat([x_t, s1_out, w_new], axis=1)
-        s2_out, [s2_state_h_new, s2_state_c_new] = self.lstm_cells[1](
-            s2_in, [s2_state_h, s2_state_c]
-        )
+        s2_out, [s2_state_h_new, s2_state_c_new] = self.lstm_cells[1](s2_in, [s2_state_h, s2_state_c])
 
         # LSTM layer 3
         s3_in = tf.concat([x_t, s2_out, w_new], axis=1)
-        s3_out, [s3_state_h_new, s3_state_c_new] = self.lstm_cells[2](
-            s3_in, [s3_state_h, s3_state_c]
-        )
+        s3_out, [s3_state_h_new, s3_state_c_new] = self.lstm_cells[2](s3_in, [s3_state_h, s3_state_c])
 
         # Preparing new states as a list to return
         new_states = [
@@ -92,9 +84,7 @@ class AttentionRNNCell(tf.keras.layers.Layer):
             initial_states[f"lstm_{idx}_h"] = h
             initial_states[f"lstm_{idx}_c"] = c
 
-        initial_states["kappa"] = tf.zeros(
-            (batch_size, self.attention_mechanism.num_gaussians), dtype=dtype
-        )
+        initial_states["kappa"] = tf.zeros((batch_size, self.attention_mechanism.num_gaussians), dtype=dtype)
         initial_states["w"] = tf.zeros((batch_size, self.num_chars), dtype=dtype)
         return initial_states
 

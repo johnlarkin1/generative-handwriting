@@ -1,4 +1,5 @@
 from typing import Tuple
+
 import tensorflow as tf
 
 
@@ -90,11 +91,7 @@ class LSTMPeepholeCell(tf.keras.layers.Layer):
         h_tm1, c_tm1 = state
         # Compute linear combinations for input, forget, and output gates, and cell candidate
         # Basically the meat of eq, 7, 8, 9, 10
-        z = (
-            tf.matmul(inputs, self.kernel)
-            + tf.matmul(h_tm1, self.recurrent_kernel)
-            + self.bias
-        )
+        z = tf.matmul(inputs, self.kernel) + tf.matmul(h_tm1, self.recurrent_kernel) + self.bias
         # Split the transformations into input, forget, cell, and output components
         i, f, c_candidate, o = tf.split(z, num_or_size_splits=4, axis=1)
 
@@ -117,9 +114,7 @@ class LSTMPeepholeCell(tf.keras.layers.Layer):
             i = tf.clip_by_value(i, -self.clip_value, self.clip_value)
             f = tf.clip_by_value(f, -self.clip_value, self.clip_value)
             o = tf.clip_by_value(o, -self.clip_value, self.clip_value)
-            c_candidate = tf.clip_by_value(
-                c_candidate, -self.clip_value, self.clip_value
-            )
+            c_candidate = tf.clip_by_value(c_candidate, -self.clip_value, self.clip_value)
 
         c_candidate = tf.tanh(c_candidate)
         c = f * c_tm1 + i * c_candidate

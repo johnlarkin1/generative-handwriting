@@ -1,5 +1,5 @@
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 import tensorflow as tf
 from mdn import bivariate_gaussian
 
@@ -24,17 +24,13 @@ def compute_density_grid_tf(
         mu1, mu2 = mus[:, i * 2], mus[:, i * 2 + 1]
         sigma1, sigma2 = sigmas[:, i * 2], sigmas[:, i * 2 + 1]
         rho = rhos[:, i]
-        density += pi[:, i] * bivariate_gaussian(
-            x1_grid_tf, x2_grid_tf, mu1, mu2, sigma1, sigma2, rho
-        )
+        density += pi[:, i] * bivariate_gaussian(x1_grid_tf, x2_grid_tf, mu1, mu2, sigma1, sigma2, rho)
 
     density_grid = tf.reshape(density, x1_grid.shape).numpy()
     return density_grid
 
 
-def plot_density_heatmap_tf(
-    density_grid: np.ndarray, x1_vals: np.ndarray, x2_vals: np.ndarray
-) -> None:
+def plot_density_heatmap_tf(density_grid: np.ndarray, x1_vals: np.ndarray, x2_vals: np.ndarray) -> None:
     """Plot a heatmap of the predicted probability density using matplotlib."""
     plt.figure(figsize=(8, 6))
     x1_grid, x2_grid = np.meshgrid(x1_vals, x2_vals)

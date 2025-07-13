@@ -1,3 +1,6 @@
+import matplotlib.pyplot as plt
+import numpy as np
+import tensorflow as tf
 from common import (
     create_gif,
     generate_loop_da_loop_data,
@@ -5,37 +8,28 @@ from common import (
     prepare_data_for_sequential_prediction,
     show_initial_data,
 )
-from tensorflow.keras.callbacks import Callback
-import numpy as np
-import matplotlib.pyplot as plt
-
-import tensorflow as tf
-
-from model.basic_mdn import BasicMixtureDensityNetwork, mdn_loss_function
 from constants import (
     EPSILON,
     NUM_LSTM_CELLS_PER_HIDDEN_LAYER,
-    TEST_NUM_MIXTURES,
-    TEST_NUM_EPOCHS,
     TEST_BATCH_SIZE,
+    TEST_NUM_EPOCHS,
+    TEST_NUM_MIXTURES,
 )
+from model.basic_mdn import BasicMixtureDensityNetwork, mdn_loss_function
+from tensorflow.keras.callbacks import Callback
 
 
 class VisualizeCallback(Callback):
     def __init__(self, data, model_name, frequency=10):
         super(VisualizeCallback, self).__init__()
         self.data = data  # Use the entire dataset for context
-        self.target = data[
-            5:6
-        ]  # Select the sixth point (ensure it's in a batched shape)
+        self.target = data[5:6]  # Select the sixth point (ensure it's in a batched shape)
         self.model_name = model_name
         self.frequency = frequency
 
     def gaussian_pdf(self, y, mean, std):
         norm = tf.reduce_sum((y - mean) ** 2 / (std**2 + EPSILON), axis=-1)
-        return tf.exp(-0.5 * norm) / (
-            2.0 * np.pi * tf.reduce_prod(std, axis=-1) + EPSILON
-        )
+        return tf.exp(-0.5 * norm) / (2.0 * np.pi * tf.reduce_prod(std, axis=-1) + EPSILON)
 
     def on_epoch_end(self, epoch, logs=None):
         if epoch % self.frequency == 0:
@@ -48,9 +42,7 @@ class VisualizeCallback(Callback):
             # Generate a grid over which to compute the PDF
             x_min, x_max = np.min(self.data[:, 0]) - 1, np.max(self.data[:, 0]) + 1
             y_min, y_max = np.min(self.data[:, 1]) - 1, np.max(self.data[:, 1]) + 1
-            xx, yy = np.meshgrid(
-                np.linspace(x_min, x_max, 100), np.linspace(y_min, y_max, 100)
-            )
+            xx, yy = np.meshgrid(np.linspace(x_min, x_max, 100), np.linspace(y_min, y_max, 100))
             grid = np.column_stack((xx.ravel(), yy.ravel()))
 
             grid = tf.constant(grid, dtype=tf.float32)
@@ -62,9 +54,7 @@ class VisualizeCallback(Callback):
             plt.figure(figsize=(10, 6))
             plt.contourf(xx, yy, pdf_values, levels=50, cmap="viridis", alpha=0.5)
             plt.scatter(self.data[:, 0], self.data[:, 1], c="grey", label="Data Points")
-            plt.scatter(
-                self.data[:5, 0], self.data[:5, 1], c="red", label="First 5 Points"
-            )
+            plt.scatter(self.data[:5, 0], self.data[:5, 1], c="red", label="First 5 Points")
             plt.scatter(
                 self.data[5, 0],
                 self.data[5, 1],
@@ -76,9 +66,7 @@ class VisualizeCallback(Callback):
             plt.ylabel("Y")
             plt.title(f"Model Predictions for Sixth Point and Heatmap at Epoch {epoch}")
             plt.legend()
-            plt.savefig(
-                f"mdn_visualizations/{self.model_name}_heatmap_epoch_{epoch}.png"
-            )
+            plt.savefig(f"mdn_visualizations/{self.model_name}_heatmap_epoch_{epoch}.png")
             plt.close()
 
 
@@ -92,12 +80,8 @@ x_train_zigzag, y_train_zigzag = prepare_data_for_sequential_prediction(zigzag_d
 x_train_loop, y_train_loop = prepare_data_for_sequential_prediction(loop_data)
 
 # Define the models
-zigzag_model = BasicMixtureDensityNetwork(
-    num_mixtures=TEST_NUM_MIXTURES, hidden_units=NUM_LSTM_CELLS_PER_HIDDEN_LAYER
-)
-loop_model = BasicMixtureDensityNetwork(
-    num_mixtures=TEST_NUM_MIXTURES, hidden_units=NUM_LSTM_CELLS_PER_HIDDEN_LAYER
-)
+zigzag_model = BasicMixtureDensityNetwork(num_mixtures=TEST_NUM_MIXTURES, hidden_units=NUM_LSTM_CELLS_PER_HIDDEN_LAYER)
+loop_model = BasicMixtureDensityNetwork(num_mixtures=TEST_NUM_MIXTURES, hidden_units=NUM_LSTM_CELLS_PER_HIDDEN_LAYER)
 
 # Compile the models
 zigzag_model.compile(

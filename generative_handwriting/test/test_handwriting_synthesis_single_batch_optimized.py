@@ -1,37 +1,33 @@
 import datetime
 import os
+
+import numpy as np
+import tensorflow as tf
 from alphabet import ALPHABET_SIZE
+from callbacks import ExtendedModelCheckpoint
 from common import (
     plot_strokes_from_dx_dy,
     prepare_data_for_sequential_prediction,
-    print_model_parameters,
 )
-from model.attention_mechanism import AttentionMechanism
-from model.attention_rnn_cell import AttentionRNNCell
-from model.lstm_peephole_cell import LSTMPeepholeCell
-from model_io import load_epochs_info, load_model_if_exists, save_epochs_info
-from plotting import generate_and_plot_heatmap, generate_and_plot_heatmap_full
-from loader import HandwritingDataLoader
-from model.mixture_density_network import MixtureDensityLayer, mdn_loss
-from model.handwriting_models import (
-    DeepHandwritingPredictionModel,
-    DeepHandwritingSynthesisModel,
-    DeepHandwritingSynthesisModel,
-)
-
-import tensorflow as tf
-import numpy as np
-
 from constants import (
     BATCH_SIZE,
-    GRADIENT_CLIP_VALUE,
     LEARNING_RATE,
     NUM_BIVARIATE_GAUSSIAN_MIXTURE_COMPONENTS,
 )
-from callbacks import ExtendedModelCheckpoint
+from loader import HandwritingDataLoader
+from model.handwriting_models import (
+    DeepHandwritingSynthesisModel,
+)
+from model.mixture_density_network import mdn_loss
 
-model_save_dir = "/Users/johnlarkin/Documents/coding/generative-handwriting/src/saved_models/handwriting_synthesis_single_batch_subset/"
-model_pred_dir = "/Users/johnlarkin/Documents/coding/generative-handwriting/handwriting_visualizations/single_stroke_synth_single_batch_subset/"
+model_save_dir = (
+    "/Users/johnlarkin/Documents/coding/generative-handwriting/src/saved_models/"
+    "handwriting_synthesis_single_batch_subset/"
+)
+model_pred_dir = (
+    "/Users/johnlarkin/Documents/coding/generative-handwriting/"
+    "handwriting_visualizations/single_stroke_synth_single_batch_subset/"
+)
 model_save_path = os.path.join(model_save_dir, "best_model.keras")
 epochs_info_path = os.path.join(model_save_dir, "epochs_info.json")
 
@@ -47,9 +43,7 @@ desired_epochs = 10_000
     stroke_lengths,
     chars,
     char_len,
-) = HandwritingDataLoader().load_individual_stroke_and_c_data(
-    "a01/a01-000/a01-000u-01.xml"
-)
+) = HandwritingDataLoader().load_individual_stroke_and_c_data("a01/a01-000/a01-000u-01.xml")
 print("strokes shape:", strokes.shape)
 print("stroke_lengths:", stroke_lengths)
 print("chars:", chars)
@@ -84,9 +78,7 @@ initial_learning_rate = LEARNING_RATE
 
 log_dir = "logs/profile/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 callbacks = [
-    tf.keras.callbacks.TensorBoard(
-        log_dir=log_dir, histogram_freq=1, profile_batch="500,520"
-    ),
+    tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1, profile_batch="500,520"),
 ]
 
 stroke_model = DeepHandwritingSynthesisModel(
@@ -107,9 +99,7 @@ stroke_model.compile(
 
 # Callbacks
 callbacks = [
-    tf.keras.callbacks.TensorBoard(
-        log_dir=log_dir, histogram_freq=1, profile_batch="500,520"
-    ),
+    tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1, profile_batch="500,520"),
     ExtendedModelCheckpoint("single_batch_synthesis_opt"),
 ]
 
