@@ -1,0 +1,10 @@
+*.pyc
+mdn_visualizations/
+saved_visualizations/
+saved_models/
+venv/
+*.npy
+
+
+
+archived

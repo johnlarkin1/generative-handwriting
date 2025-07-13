@@ -1,0 +1,23 @@
+{
+    "black-formatter.args": ["--config=pyproject.toml"],
+    "[python]": {
+      "editor.defaultFormatter": "charliermarsh.ruff",
+      "editor.formatOnSave": true,
+      "editor.codeActionsOnSave": {
+        "source.fixAll": "always"
+      }
+    },
+    "ruff.organizeImports": true,
+    "ruff.fixAll": true,
+    "cSpell.words": [
+      "boto",
+      "CCOEFF",
+      "IMREAD",
+      "pyautogui",
+      "pytessaract",
+      "Supabase",
+      "thresholded",
+      "XYWH"
+    ]
+  }
+  

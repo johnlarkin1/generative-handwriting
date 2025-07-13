@@ -1,0 +1,31 @@
+{
+  // Python
+  "[python]": {
+    "editor.codeActionsOnSave": {
+      "source.fixAll": "explicit"
+    },
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true
+  },
+
+  // Ruff
+  "ruff.fixAll": true,
+  "ruff.organizeImports": true,
+
+  // Black
+  "black-formatter.args": ["--config=pyproject.toml"],
+
+  // TypeScript
+  "typescript.preferences.importModuleSpecifier": "non-relative",
+  "typescript.updateImportsOnFileMove.enabled": "always",
+
+  // Global editor settings
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll": "explicit",
+    "source.organizeImports": "explicit"
+  },
+
+  // Spell-checking (unchanged)
+  "cSpell.words": ["gaussians"]
+}
