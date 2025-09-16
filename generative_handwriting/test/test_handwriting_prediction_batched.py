@@ -86,7 +86,7 @@ stroke_model, model_loaded = load_model_if_exists(model_save_path, model_hash)
 
 if not model_loaded:
     print("No suitable saved model found or model has changed, initializing a new one...")
-    stroke_model = DeepHandwritingPredictionModel(num_mixture_components=num_mixture_components, stateful=True)
+    stroke_model = DeepHandwritingPredictionModel(num_mixture_components=num_mixture_components)
     stroke_model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
         loss=model_mdn_loss,

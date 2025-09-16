@@ -37,34 +37,34 @@ class AttentionMechanism(tf.keras.layers.Layer):
         beta = tf.maximum(beta, 1e-8)
         kappa_increment = tf.maximum(kappa_increment, 1e-8)
 
-        # Update kappa
         kappa = prev_kappa + kappa_increment
-
-        # Tiling 'enum' across batch size and number of attention mixture components
         char_len = tf.shape(char_seq_one_hot)[1]
         batch_size = tf.shape(inputs)[0]
         u = tf.cast(tf.range(0, char_len), tf.float32)  # Shape: [char_len]
         u = tf.reshape(u, [1, 1, -1])  # Shape: [1, 1, char_len]
         u = tf.tile(u, [batch_size, self.num_gaussians, 1])  # Shape: [batch_size, num_gaussians, char_len]
 
-        # Calculating the Gaussian window
+        # gaussian window
         alpha = tf.expand_dims(alpha, axis=-1)  # Shape: [batch_size, num_gaussians, 1]
         beta = tf.expand_dims(beta, axis=-1)  # Shape: [batch_size, num_gaussians, 1]
         kappa = tf.expand_dims(kappa, axis=-1)  # Shape: [batch_size, num_gaussians, 1]
 
-        # Compute the attention weights (phi)
-        phi = alpha * tf.exp(-beta * tf.square(kappa - u))  # Shape: [batch_size, num_gaussians, char_len]
+        # phi - attention weights with numerical stability
+        # Clip the exponent to prevent overflow
+        exponent = -beta * tf.square(kappa - u)
+        exponent = tf.clip_by_value(exponent, -50.0, 50.0)
+        phi = alpha * tf.exp(exponent)  # Shape: [batch_size, num_gaussians, char_len]
         phi = tf.reduce_sum(phi, axis=1)  # Sum over the gaussians: [batch_size, char_len]
 
-        # Apply sequence mask
+        # sequence mask
         sequence_mask = tf.sequence_mask(sequence_lengths, maxlen=char_len, dtype=tf.float32)
         phi = phi * sequence_mask  # Apply mask to attention weights
 
-        # Normalize phi over characters to sum to 1
-        phi_sum = tf.reduce_sum(phi, axis=1, keepdims=True) + 1e-8
+        # normalize with stronger epsilon for numerical stability
+        phi_sum = tf.reduce_sum(phi, axis=1, keepdims=True) + 1e-6
         phi = phi / phi_sum
 
-        # Compute the window vector
+        # window vec
         phi = tf.expand_dims(phi, axis=-1)  # Shape: [batch_size, char_len, 1]
         w = tf.reduce_sum(phi * char_seq_one_hot, axis=1)  # Shape: [batch_size, num_chars]
 

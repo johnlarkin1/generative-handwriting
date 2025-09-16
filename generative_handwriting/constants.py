@@ -40,15 +40,15 @@ NUM_MIXTURE_COMPONENTS_PER_COMPONENT = 6
 
 # Training Parameters
 
-NUM_EPOCH = 10000
+NUM_EPOCH = 1000  # More reasonable for experimentation
 
-BATCH_SIZE = 64
+BATCH_SIZE = 64  # Balanced for GPU memory and utilization
 
 ADAM_CLIP_NORM = 100
 
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 5e-5  # Reduced from 1e-4 for better stability
 
-GRADIENT_CLIP_VALUE = 10
+GRADIENT_CLIP_VALUE = 5.0  # Reduced from 10 for better stability
 
 
 # Test Parameters

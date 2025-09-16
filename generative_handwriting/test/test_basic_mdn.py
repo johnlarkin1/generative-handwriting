@@ -93,29 +93,30 @@ loop_model.compile(
     loss=lambda actual, outputs: mdn_loss_function(actual, outputs, TEST_NUM_MIXTURES),
 )
 
-# Train the Zig Zag model with visualization
-zigzag_model.fit(
-    x_train_zigzag,
-    y_train_zigzag,
-    epochs=TEST_NUM_EPOCHS,
-    batch_size=TEST_BATCH_SIZE,
-    verbose=1,
-    callbacks=[VisualizeCallback(x_train_zigzag, "zigzag", frequency=10)],
-)
+if __name__ == "__main__":
+    # Train the Zig Zag model with visualization
+    zigzag_model.fit(
+        x_train_zigzag,
+        y_train_zigzag,
+        epochs=TEST_NUM_EPOCHS,
+        batch_size=TEST_BATCH_SIZE,
+        verbose=1,
+        callbacks=[VisualizeCallback(x_train_zigzag, "zigzag", frequency=10)],
+    )
 
-# Train the Loop Da Loop model with visualization
-loop_model.fit(
-    x_train_loop,
-    y_train_loop,
-    epochs=TEST_NUM_EPOCHS,
-    batch_size=TEST_BATCH_SIZE,
-    verbose=1,
-    callbacks=[VisualizeCallback(x_train_loop, "loop", frequency=10)],
-)
+    # Train the Loop Da Loop model with visualization
+    loop_model.fit(
+        x_train_loop,
+        y_train_loop,
+        epochs=TEST_NUM_EPOCHS,
+        batch_size=TEST_BATCH_SIZE,
+        verbose=1,
+        callbacks=[VisualizeCallback(x_train_loop, "loop", frequency=10)],
+    )
 
-create_gif("mdn_visualizations", "zigzag")
-create_gif("mdn_visualizations", "loop")
-create_gif("mdn_visualizations", "zigzag_heatmap")
-create_gif("mdn_visualizations", "loop_heatmap")
-create_gif("mdn_visualizations", "zigzag_prediction")
-create_gif("mdn_visualizations", "loop_prediction")
+    create_gif("mdn_visualizations", "zigzag")
+    create_gif("mdn_visualizations", "loop")
+    create_gif("mdn_visualizations", "zigzag_heatmap")
+    create_gif("mdn_visualizations", "loop_heatmap")
+    create_gif("mdn_visualizations", "zigzag_prediction")
+    create_gif("mdn_visualizations", "loop_prediction")

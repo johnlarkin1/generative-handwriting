@@ -97,7 +97,8 @@ class MixtureDensityLayer(tf.keras.layers.Layer):
         return sigma_reg - 0.1 * pi_entropy + rho_reg
 
     def call(self, inputs, training=None):
-        sigma_eps = 1e-3
+        sigma_eps = 1e-2  # Increased from 1e-3 for better stability
+        sigma_max = 100.0  # Add upper bound to prevent extreme values
         temperature = 1.0 if not training else self.temperature
 
         pi_logits = tf.matmul(inputs, self.W_pi) + self.b_pi
@@ -107,12 +108,14 @@ class MixtureDensityLayer(tf.keras.layers.Layer):
         mu1, mu2 = tf.split(mu, num_or_size_splits=2, axis=2)
 
         log_sigma = tf.matmul(inputs, self.W_sigma) + self.b_sigma
+        # Clip log_sigma to prevent extreme values
+        log_sigma = tf.clip_by_value(log_sigma, -10.0, 10.0)
         sigma = tf.exp(log_sigma)
-        sigmas = tf.clip_by_value(sigma, sigma_eps, np.inf)
+        sigmas = tf.clip_by_value(sigma, sigma_eps, sigma_max)
         sigma1, sigma2 = tf.split(sigmas, num_or_size_splits=2, axis=2)
 
         rho_raw = tf.matmul(inputs, self.W_rho) + self.b_rho
-        rho = tf.tanh(rho_raw) * 0.99  # Prevent exact ±1 values
+        rho = tf.tanh(rho_raw) * 0.95  # More conservative to prevent numerical issues
 
         reg_loss = self._compute_regularization(pi, sigma, rho)
         self.add_loss(reg_loss)
@@ -149,7 +152,7 @@ class MixtureDensityLayer(tf.keras.layers.Layer):
 
 
 @tf.keras.utils.register_keras_serializable()
-def mdn_loss(y_true, y_pred, stroke_lengths, num_components, eps=1e-5):
+def mdn_loss(y_true, y_pred, stroke_lengths, num_components, eps=1e-6):
     """Calculate the mixture density loss with masking for valid sequence lengths.
     Implements the loss calculation fully in log space for numerical stability.
 
@@ -173,37 +176,70 @@ def mdn_loss(y_true, y_pred, stroke_lengths, num_components, eps=1e-5):
     # Split the targets
     x_data, y_data, eos_data = tf.split(y_true, [1, 1, 1], axis=-1)
 
-    # Calculate log probabilities for the bivariate normal distribution
-    # Log of normalization constant
-    log_norm = -tf.math.log(2 * np.pi) - tf.math.log(out_sigma1 + eps) - tf.math.log(out_sigma2 + eps)
+    # Ensure sigma values are properly bounded
+    out_sigma1 = tf.clip_by_value(out_sigma1, 1e-2, 100.0)
+    out_sigma2 = tf.clip_by_value(out_sigma2, 1e-2, 100.0)
 
-    # Handle correlation term in log space
-    rho_term = tf.math.log(1.0 - tf.square(out_rho) + eps)
+    # Ensure rho is properly bounded to avoid numerical issues
+    out_rho = tf.clip_by_value(out_rho, -0.95, 0.95)
+
+    # Ensure pi values are properly normalized and bounded
+    out_pi = tf.clip_by_value(out_pi, eps, 1.0 - eps)
+    out_pi = out_pi / tf.reduce_sum(out_pi, axis=-1, keepdims=True)
+
+    # Calculate log probabilities for the bivariate normal distribution
+    # Log of normalization constant with safer log operations
+    log_norm = -tf.math.log(2 * np.pi) - tf.math.log(out_sigma1) - tf.math.log(out_sigma2)
+
+    # Handle correlation term in log space with bounds check
+    rho_squared = tf.square(out_rho)
+    rho_term = tf.math.log(tf.maximum(1.0 - rho_squared, eps))
     log_norm = log_norm - 0.5 * rho_term
 
-    # Calculate Z-score terms
-    z_1 = (x_data - out_mu1) / (out_sigma1 + eps)
-    z_2 = (y_data - out_mu2) / (out_sigma2 + eps)
+    # Calculate Z-score terms with clipping to prevent extreme values
+    z_1 = tf.clip_by_value((x_data - out_mu1) / out_sigma1, -10.0, 10.0)
+    z_2 = tf.clip_by_value((y_data - out_mu2) / out_sigma2, -10.0, 10.0)
     z_12 = z_1 * z_2
 
-    # Calculate exponent term in log space
-    exponent = -0.5 / (1.0 - tf.square(out_rho) + eps) * (tf.square(z_1) + tf.square(z_2) - 2 * out_rho * z_12)
+    # Calculate exponent term in log space with protection against division by small values
+    denominator = tf.maximum(1.0 - rho_squared, eps)
+    exponent = -0.5 / denominator * (tf.square(z_1) + tf.square(z_2) - 2 * out_rho * z_12)
+
+    # Clip exponent to prevent overflow/underflow
+    exponent = tf.clip_by_value(exponent, -50.0, 50.0)
 
     # Complete log probability for each component
     log_probs = log_norm + exponent
 
     # Calculate log mixture probabilities using log-sum-exp trick
-    log_pi = tf.math.log(out_pi + eps)
-    log_mixture = tf.reduce_logsumexp(log_pi + log_probs, axis=2)
+    log_pi = tf.math.log(out_pi)
+    weighted_log_probs = log_pi + log_probs
 
-    # Calculate bernoulli log likelihood for end-of-stroke
-    eos_logits = tf.math.log(out_eos + eps)
-    non_eos_logits = tf.math.log(1 - out_eos + eps)
+    # Use stable log-sum-exp
+    max_weighted = tf.reduce_max(weighted_log_probs, axis=2, keepdims=True)
+    log_mixture = max_weighted + tf.math.log(tf.reduce_sum(
+        tf.exp(weighted_log_probs - max_weighted), axis=2, keepdims=True
+    ))
+    log_mixture = tf.squeeze(log_mixture, axis=2)
+
+    # Calculate bernoulli log likelihood for end-of-stroke with safer operations
+    out_eos = tf.clip_by_value(out_eos, eps, 1.0 - eps)
+    eos_logits = tf.math.log(out_eos)
+    non_eos_logits = tf.math.log(1.0 - out_eos)
     bernoulli_logits = tf.where(tf.equal(tf.ones_like(eos_data), eos_data), eos_logits, non_eos_logits)
     log_bernoulli = tf.squeeze(bernoulli_logits)
 
     # Combine log likelihoods
-    nll = -(log_mixture + log_bernoulli)
+    total_log_likelihood = log_mixture + log_bernoulli
+
+    # Check for NaN/Inf and replace with large finite value
+    total_log_likelihood = tf.where(
+        tf.logical_or(tf.math.is_nan(total_log_likelihood), tf.math.is_inf(total_log_likelihood)),
+        tf.constant(-50.0, dtype=total_log_likelihood.dtype),
+        total_log_likelihood
+    )
+
+    nll = -total_log_likelihood
 
     # Apply masking if stroke lengths are provided
     if stroke_lengths is not None:
@@ -215,6 +251,6 @@ def mdn_loss(y_true, y_pred, stroke_lengths, num_components, eps=1e-5):
         masked_nll = tf.where(tf.not_equal(mask, 0), masked_nll, tf.zeros_like(masked_nll))
 
         # Return average loss over valid sequence steps
-        return tf.reduce_sum(masked_nll) / (tf.reduce_sum(mask) + eps)
+        return tf.reduce_sum(masked_nll) / tf.maximum(tf.reduce_sum(mask), 1.0)
 
     return tf.reduce_mean(nll)
