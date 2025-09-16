@@ -50,4 +50,5 @@ def test_mdn_loss():
     print("All tests passed!")
 
 
-test_mdn_loss()
+if __name__ == "__main__":
+    test_mdn_loss()
