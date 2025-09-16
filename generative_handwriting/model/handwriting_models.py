@@ -235,7 +235,10 @@ class DeepHandwritingSynthesisModel(tf.keras.Model):
         x_train_len = inputs["input_stroke_lens"]
         with tf.GradientTape() as tape:
             y_pred = self(inputs, training=True)
-            loss = mdn_loss(y_true, y_pred, x_train_len, self.num_mixture_components)
+            nll = mdn_loss(y_true, y_pred, x_train_len, self.num_mixture_components)
+            # Add layer regularizers (e.g., from MixtureDensityLayer)
+            total_loss = nll + tf.add_n(self.losses)
+            loss = total_loss
 
         gradients = tape.gradient(loss, self.trainable_variables)
         clipped_grads_and_vars = [

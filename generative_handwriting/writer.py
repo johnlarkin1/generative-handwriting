@@ -213,10 +213,10 @@ class Calligrapher:
             for i in range(pi.shape[0])
         ]
 
-        # Sample end-of-stroke with temperature
-        eos = tf.sigmoid(eos_logits / temperature).numpy()
+        # Sample end-of-stroke probabilities from logits with temperature
+        eos_prob = tf.sigmoid(eos_logits / temperature).numpy()
 
-        return sampled_points, eos
+        return sampled_points, eos_prob
 
     def write(
         self,

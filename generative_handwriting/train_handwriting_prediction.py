@@ -131,14 +131,16 @@ if __name__ == "__main__":
                     nan_monitor.save_emergency_checkpoint(stroke_model, total_step)
                     break
 
-                loss = model_mdn_loss(batch_y, predictions, batch_len, num_mixture_components)
+                nll = model_mdn_loss(batch_y, predictions, batch_len, num_mixture_components)
+                # Add layer regularizers (e.g., from MixtureDensityLayer)
+                total_loss = nll + tf.add_n(stroke_model.losses)
+                loss = total_loss
 
                 # Check loss for NaN
                 if tf.math.is_nan(loss) or tf.math.is_inf(loss):
                     print(f"🚨 NaN/Inf detected in loss at step {total_step}: {loss.numpy()}")
                     nan_monitor.save_emergency_checkpoint(stroke_model, total_step)
                     break
-
             gradients = tape.gradient(loss, stroke_model.trainable_variables)
 
             # Check gradients for NaN
@@ -158,7 +160,6 @@ if __name__ == "__main__":
                 print(f"🚨 NaN detected in model weights after update at step {total_step}")
                 nan_monitor.save_emergency_checkpoint(stroke_model, total_step)
                 break
-
             epoch_losses.append(loss.numpy())
 
             if epoch == 0 and step == 0:
