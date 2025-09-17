@@ -108,10 +108,11 @@ if __name__ == "__main__":
     stroke_model.compile(
         optimizer=tf.keras.optimizers.RMSprop(
             learning_rate=learning_rate_schedule,
-            global_clipnorm=GRADIENT_CLIP_VALUE,
+            global_clipnorm=GRADIENT_CLIP_VALUE,  # Use optimizer's global clipping instead of manual
         ),
-        loss=None,  # i don't think we need this because we have a custom loss function
-        run_eagerly=True,
+        loss=None,          # Correct when overriding train_step
+        run_eagerly=False,  # Faster + works better with XLA; set True only when debugging
+        jit_compile=True,   # Enable XLA JIT compilation for better performance
     )
 
     callbacks = [
