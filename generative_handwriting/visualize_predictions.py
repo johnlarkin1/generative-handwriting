@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from typing import Tuple
 
 import imageio.v2 as imageio  # Fix deprecation warning
@@ -101,15 +102,22 @@ def compute_probability_grid(
 
 
 def extract_mdn_parameters(mdn_output: tf.Tensor, num_components: int = 20) -> dict:
-    """Extract MDN parameters from model output."""
-    # The output should contain: pi, mu_x, mu_y, sigma_x, sigma_y, rho, eos
-    pi = tf.nn.softmax(mdn_output[:num_components])
+    """Extract MDN parameters from model output.
+
+    IMPORTANT: The MDN layer already applies transformations to its outputs:
+    - pi is already softmaxed
+    - sigma values are already exponentiated
+    - rho is already tanh'd
+    - eos is raw logits (needs sigmoid)
+    """
+    # The model outputs are already transformed except for EOS
+    pi = mdn_output[:num_components]  # Already softmaxed
     mu_x = mdn_output[num_components : 2 * num_components]
     mu_y = mdn_output[2 * num_components : 3 * num_components]
-    sigma_x = tf.exp(mdn_output[3 * num_components : 4 * num_components])
-    sigma_y = tf.exp(mdn_output[4 * num_components : 5 * num_components])
-    rho = tf.tanh(mdn_output[5 * num_components : 6 * num_components])
-    eos = tf.sigmoid(mdn_output[6 * num_components : 6 * num_components + 1])
+    sigma_x = mdn_output[3 * num_components : 4 * num_components]  # Already exp'd
+    sigma_y = mdn_output[4 * num_components : 5 * num_components]  # Already exp'd
+    rho = mdn_output[5 * num_components : 6 * num_components]  # Already tanh'd
+    eos = tf.sigmoid(mdn_output[6 * num_components : 6 * num_components + 1])  # Apply sigmoid to logits
 
     return {
         "pi": pi.numpy(),
@@ -133,15 +141,21 @@ def visualize_prediction_sequence(
     """Create a GIF showing prediction evolution as more context is provided."""
     figures = []
 
-    # Prepare for saving individual frames
-    frame_dir = "prediction_frames"
+    # Prepare for saving individual frames with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base_frame_dir = "prediction_frames"
+    frame_dir = os.path.join(base_frame_dir, f"sequence_{save_path.split('_')[-1].split('.')[0]}_{timestamp}")
     os.makedirs(frame_dir, exist_ok=True)
+    print(f"📁 Saving frames to: {frame_dir}")
 
     # Track EOS predictions and analysis
     eos_log = []
 
+    # Track mixture component activations over time for visualization
+    component_activations = []  # Will store pi values for each timestep
+
     # Get sequence length
-    seq_len = min(len(stroke_sequence), 200)  # Limit to 50 points for visualization
+    seq_len = min(len(stroke_sequence), 400)  # Limit to 50 points for visualization
 
     print(f"Generating prediction visualizations for {seq_len} steps...")
 
@@ -167,11 +181,17 @@ def visualize_prediction_sequence(
         last_pred = prediction[0, -1, :]
         params = extract_mdn_parameters(last_pred, num_components)
 
-        # Create figure with 3 subplots - add macro view
-        fig = plt.figure(figsize=(20, 6))
-        ax1 = plt.subplot(1, 3, 1)  # Trajectory with components
-        ax2 = plt.subplot(1, 3, 2)  # Probability heatmap
-        ax3 = plt.subplot(1, 3, 3)  # Full word/sequence view
+        # Store component activations for time plot
+        component_activations.append(params["pi"].copy())
+
+        # Create figure with 6 subplots in 2x3 grid
+        fig = plt.figure(figsize=(24, 12))
+        ax1 = plt.subplot(2, 3, 1)  # Trajectory with components (zoomed in)
+        ax2 = plt.subplot(2, 3, 2)  # Probability heatmap (zoomed in)
+        ax3 = plt.subplot(2, 3, 3)  # Full word/sequence view
+        ax4 = plt.subplot(2, 3, 4)  # Trajectory with components (zoomed out)
+        ax5 = plt.subplot(2, 3, 5)  # Probability heatmap (zoomed out)
+        ax6 = plt.subplot(2, 3, 6)  # Mixture component activations over time
 
         # Plot 1: Trajectory with prediction ellipses
         # Handle pen-up/pen-down by splitting strokes
@@ -251,14 +271,14 @@ def visualize_prediction_sequence(
         ax1.set_title(f"Step {t}: Trajectory and Prediction Components")
         ax1.legend()
 
-        # Set reasonable axis limits based on trajectory
-        trajectory_range = 20  # Show 20 units around current position
+        # Set reasonable axis limits based on trajectory - ZOOMED IN for better visibility
+        trajectory_range = 5  # Show 5 units around current position for tighter zoom
         curr_x, curr_y = stroke_sequence[t - 1, 0], stroke_sequence[t - 1, 1]
         ax1.set_xlim(curr_x - trajectory_range, curr_x + trajectory_range)
         ax1.set_ylim(curr_y - trajectory_range, curr_y + trajectory_range)
         ax1.grid(True, alpha=0.3)
 
-        # Plot 2: Enhanced probability heatmap with larger view
+        # Plot 2: Enhanced probability heatmap with ZOOMED IN view for spike visibility
         X, Y, prob_grid = compute_probability_grid(
             params["pi"],
             params["mu_x"],
@@ -266,8 +286,8 @@ def visualize_prediction_sequence(
             params["sigma_x"],
             params["sigma_y"],
             params["rho"],
-            grid_size=150,  # Reasonable resolution
-            grid_range=8.0,  # Smaller focused view
+            grid_size=200,  # Higher resolution for better detail
+            grid_range=3.0,  # Much tighter view to see probability peaks clearly
         )
 
         # Shift grid to current position
@@ -343,115 +363,255 @@ def visualize_prediction_sequence(
         ax2.set_ylabel("Y coordinate")
         ax2.set_title(f"Probability Density Heatmap (EOS: {params['eos'][0]:.3f})")
 
-        # Set matching axis limits for consistency
-        ax2.set_xlim(curr_x - trajectory_range, curr_x + trajectory_range)
-        ax2.set_ylim(curr_y - trajectory_range, curr_y + trajectory_range)
+        # Set matching axis limits for consistency - using tighter zoom for heatmap
+        heatmap_range = 3  # Match the grid_range for proper zooming
+        ax2.set_xlim(curr_x - heatmap_range, curr_x + heatmap_range)
+        ax2.set_ylim(curr_y - heatmap_range, curr_y + heatmap_range)
         plt.colorbar(im, ax=ax2, label="Probability Density", shrink=0.8)
 
         # Check if this is near an end-of-stroke (move this up before using it)
-        is_eos_prediction = params['eos'][0] > 0.3  # High EOS probability
+        is_eos_prediction = params["eos"][0] > 0.08  # High EOS probability (90th percentile)
         actual_eos = False
         if t < len(stroke_sequence) - 1:
             actual_eos = stroke_sequence[t, 2] == 1  # Next point is end-of-stroke
 
-        # Plot 3: Full sequence overview
+        # Plot 3: Clean full sequence overview
         full_coords = stroke_sequence  # Complete sequence
 
         # Plot the complete handwriting with pen-up/pen-down handling
         stroke_ends = np.where(full_coords[:, 2] == 1)[0]
         start_idx = 0
 
-        # Plot each stroke segment in different colors for better visibility
-        colors_cycle = ['blue', 'green', 'red', 'orange', 'purple', 'brown', 'pink', 'gray']
-        stroke_num = 0
-
+        # Use a single color for cleaner appearance
         for end_idx in stroke_ends:
             if end_idx >= start_idx and end_idx < len(full_coords):
-                stroke_segment = full_coords[start_idx:end_idx+1]
+                stroke_segment = full_coords[start_idx : end_idx + 1]
                 if len(stroke_segment) > 1:
-                    color = colors_cycle[stroke_num % len(colors_cycle)]
-
-                    # Highlight the current portion we're predicting
+                    # Split into past and future based on current position
                     if start_idx <= t <= end_idx:
-                        # Split into past and future
-                        past_segment = stroke_segment[:min(t-start_idx+1, len(stroke_segment))]
-                        future_segment = stroke_segment[min(t-start_idx, len(stroke_segment)):]
+                        # Current stroke - show past and future differently
+                        past_segment = stroke_segment[: min(t - start_idx + 1, len(stroke_segment))]
+                        future_segment = stroke_segment[min(t - start_idx, len(stroke_segment)) :]
 
                         if len(past_segment) > 1:
-                            ax3.plot(past_segment[:, 0], past_segment[:, 1], color=color, linewidth=3, alpha=0.8, label=f'Past (Stroke {stroke_num+1})')
+                            ax3.plot(past_segment[:, 0], past_segment[:, 1], "black", linewidth=2, alpha=0.8)
                         if len(future_segment) > 1:
-                            ax3.plot(future_segment[:, 0], future_segment[:, 1], color=color, linewidth=2, alpha=0.4, linestyle='--', label=f'Future (Stroke {stroke_num+1})')
+                            ax3.plot(future_segment[:, 0], future_segment[:, 1], "gray", linewidth=1, alpha=0.4)
                     else:
-                        # Complete stroke - dim if future, bright if past
-                        alpha = 0.8 if end_idx < t else 0.3
-                        linewidth = 3 if end_idx < t else 1
-                        linestyle = '-' if end_idx < t else '--'
-                        ax3.plot(stroke_segment[:, 0], stroke_segment[:, 1], color=color, linewidth=linewidth, alpha=alpha, linestyle=linestyle)
+                        # Complete stroke - solid if past, light if future
+                        alpha = 0.8 if end_idx < t else 0.4
+                        linewidth = 2 if end_idx < t else 1
+                        color = "black" if end_idx < t else "gray"
+                        ax3.plot(
+                            stroke_segment[:, 0], stroke_segment[:, 1], color=color, linewidth=linewidth, alpha=alpha
+                        )
 
-                    stroke_num += 1
                 start_idx = end_idx + 1
 
         # Handle final segment if no pen-up at end
         if start_idx < len(full_coords):
             stroke_segment = full_coords[start_idx:]
             if len(stroke_segment) > 1:
-                color = colors_cycle[stroke_num % len(colors_cycle)]
                 if start_idx <= t:
-                    past_segment = stroke_segment[:t-start_idx+1] if t-start_idx+1 < len(stroke_segment) else stroke_segment
-                    future_segment = stroke_segment[t-start_idx:] if t-start_idx < len(stroke_segment) else []
+                    past_segment = (
+                        stroke_segment[: t - start_idx + 1]
+                        if t - start_idx + 1 < len(stroke_segment)
+                        else stroke_segment
+                    )
+                    future_segment = stroke_segment[t - start_idx :] if t - start_idx < len(stroke_segment) else []
 
                     if len(past_segment) > 1:
-                        ax3.plot(past_segment[:, 0], past_segment[:, 1], color=color, linewidth=3, alpha=0.8)
+                        ax3.plot(past_segment[:, 0], past_segment[:, 1], "black", linewidth=2, alpha=0.8)
                     if len(future_segment) > 1:
-                        ax3.plot(future_segment[:, 0], future_segment[:, 1], color=color, linewidth=2, alpha=0.4, linestyle='--')
+                        ax3.plot(future_segment[:, 0], future_segment[:, 1], "gray", linewidth=1, alpha=0.4)
                 else:
-                    ax3.plot(stroke_segment[:, 0], stroke_segment[:, 1], color=color, linewidth=1, alpha=0.3, linestyle='--')
+                    ax3.plot(stroke_segment[:, 0], stroke_segment[:, 1], "gray", linewidth=1, alpha=0.4)
 
-        # Mark current position with different style based on EOS prediction
-        current_marker = 'D' if is_eos_prediction else 'o'  # Diamond for high EOS prediction
-        current_color = 'orange' if is_eos_prediction else 'red'
-        ax3.scatter(stroke_sequence[t-1, 0], stroke_sequence[t-1, 1], color=current_color, s=200, zorder=10,
-                   edgecolor='black', linewidth=3, marker=current_marker,
-                   label=f'Current (EOS: {params["eos"][0]:.2f})')
+        # Mark only the current position with a simple red dot
+        ax3.scatter(stroke_sequence[t - 1, 0], stroke_sequence[t - 1, 1], color="red", s=80, zorder=10)
 
-        # Mark start position
-        ax3.scatter(stroke_sequence[0, 0], stroke_sequence[0, 1], color='green', s=150, zorder=9,
-                   edgecolor='black', linewidth=2, marker='s', label='Start')
+        ax3.set_xlabel("X coordinate")
+        ax3.set_ylabel("Y coordinate")
+        ax3.set_title(f"Complete Handwriting Sequence (Step {t}/{len(stroke_sequence)})")
+        ax3.axis("equal")
 
-        # Mark actual end-of-stroke points in the sequence
-        eos_points = np.where(stroke_sequence[:, 2] == 1)[0]
-        if len(eos_points) > 0:
-            ax3.scatter(stroke_sequence[eos_points, 0], stroke_sequence[eos_points, 1],
-                       color='purple', s=100, zorder=8, marker='X', alpha=0.7,
-                       label=f'Actual EOS ({len(eos_points)} points)')
-
-        ax3.set_xlabel('X coordinate')
-        ax3.set_ylabel('Y coordinate')
-        ax3.set_title(f'Complete Handwriting Sequence (Step {t}/{len(stroke_sequence)})')
-        ax3.grid(True, alpha=0.3)
-        ax3.axis('equal')
-
-        # Add progress indicator
+        # Add simple progress indicator
         progress = t / len(stroke_sequence) * 100
-        ax3.text(0.02, 0.98, f'Progress: {progress:.1f}%', transform=ax3.transAxes,
-                bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8),
-                fontsize=12, fontweight='bold', verticalalignment='top')
+        ax3.text(
+            0.02,
+            0.98,
+            f"Progress: {progress:.1f}%",
+            transform=ax3.transAxes,
+            bbox=dict(boxstyle="round", facecolor="lightblue", alpha=0.8),
+            fontsize=12,
+            fontweight="bold",
+            verticalalignment="top",
+        )
+
+        # ======= Plot 4: Zoomed-out Trajectory with Components =======
+        # Similar to plot 1 but with larger view
+        zoomed_out_range = 20  # Larger view area
+
+        # Plot past trajectory with pen handling
+        stroke_ends = np.where(past_coords[:, 2] == 1)[0]
+        start_idx = 0
+        for end_idx in stroke_ends:
+            if end_idx >= start_idx:
+                stroke_segment = past_coords[start_idx : end_idx + 1]
+                if len(stroke_segment) > 1:
+                    ax4.plot(stroke_segment[:, 0], stroke_segment[:, 1], "b-", alpha=0.5)
+                start_idx = end_idx + 1
+        if start_idx < len(past_coords):
+            stroke_segment = past_coords[start_idx:]
+            if len(stroke_segment) > 1:
+                ax4.plot(stroke_segment[:, 0], stroke_segment[:, 1], "b-", alpha=0.5)
+
+        # Plot future ground truth
+        if t + 5 < len(stroke_sequence):
+            future_coords = stroke_sequence[t : t + 5]
+            ax4.plot(future_coords[:, 0], future_coords[:, 1], "g--", alpha=0.3, label="Future (ground truth)")
+
+        # Current position
+        ax4.scatter(
+            stroke_sequence[t - 1, 0], stroke_sequence[t - 1, 1], color="red", s=100, zorder=5, label="Current position"
+        )
+
+        # Draw ellipses for mixture components (same as plot 1)
+        for i, idx in enumerate(active_components):
+            sx = params["sigma_x"][idx]
+            sy = params["sigma_y"][idx]
+            r = params["rho"][idx]
+            cov = np.array([[sx**2, r * sx * sy], [r * sx * sy, sy**2]])
+            try:
+                eigenvalues, eigenvectors = np.linalg.eig(cov)
+                angle = np.degrees(np.arctan2(eigenvectors[1, 0], eigenvectors[0, 0]))
+                ellipse = Ellipse(
+                    (params["mu_x"][idx] + stroke_sequence[t - 1, 0], params["mu_y"][idx] + stroke_sequence[t - 1, 1]),
+                    2 * np.sqrt(eigenvalues[0]),
+                    2 * np.sqrt(eigenvalues[1]),
+                    angle=angle,
+                    alpha=min(params["pi"][idx] * 5, 0.7),
+                    facecolor=colors[i],
+                    edgecolor=colors[i],
+                    linewidth=1,
+                )
+                ax4.add_patch(ellipse)
+            except:
+                continue
+
+        ax4.set_xlabel("X coordinate")
+        ax4.set_ylabel("Y coordinate")
+        ax4.set_title("Trajectory (Zoomed Out)")
+        ax4.set_xlim(curr_x - zoomed_out_range, curr_x + zoomed_out_range)
+        ax4.set_ylim(curr_y - zoomed_out_range, curr_y + zoomed_out_range)
+        ax4.grid(True, alpha=0.3)
+
+        # ======= Plot 5: Zoomed-out Probability Heatmap =======
+        X_out, Y_out, prob_grid_out = compute_probability_grid(
+            params["pi"],
+            params["mu_x"],
+            params["mu_y"],
+            params["sigma_x"],
+            params["sigma_y"],
+            params["rho"],
+            grid_size=150,
+            grid_range=10.0,  # Larger view
+        )
+        X_out += stroke_sequence[t - 1, 0]
+        Y_out += stroke_sequence[t - 1, 1]
+
+        # Plot heatmap
+        im_out = ax5.contourf(X_out, Y_out, prob_grid_out, levels=30, cmap="hot", alpha=0.8)
+
+        # Plot trajectory
+        start_idx = 0
+        for end_idx in stroke_ends:
+            if end_idx >= start_idx:
+                stroke_segment = past_coords[start_idx : end_idx + 1]
+                if len(stroke_segment) > 1:
+                    ax5.plot(stroke_segment[:, 0], stroke_segment[:, 1], "c-", linewidth=2, alpha=0.9)
+                start_idx = end_idx + 1
+        if start_idx < len(past_coords):
+            stroke_segment = past_coords[start_idx:]
+            if len(stroke_segment) > 1:
+                ax5.plot(stroke_segment[:, 0], stroke_segment[:, 1], "c-", linewidth=2, alpha=0.9)
+
+        ax5.scatter(
+            stroke_sequence[t - 1, 0],
+            stroke_sequence[t - 1, 1],
+            color="cyan",
+            s=150,
+            zorder=5,
+            edgecolor="black",
+            linewidth=2,
+        )
+
+        if t < len(stroke_sequence) - 1:
+            ax5.scatter(
+                stroke_sequence[t, 0], stroke_sequence[t, 1], color="lime", s=100, marker="x", zorder=5, linewidth=3
+            )
+
+        ax5.set_xlabel("X coordinate")
+        ax5.set_ylabel("Y coordinate")
+        ax5.set_title("Probability Heatmap (Zoomed Out)")
+        ax5.set_xlim(curr_x - zoomed_out_range, curr_x + zoomed_out_range)
+        ax5.set_ylim(curr_y - zoomed_out_range, curr_y + zoomed_out_range)
+        plt.colorbar(im_out, ax=ax5, label="Probability Density", shrink=0.8)
+
+        # ======= Plot 6: Mixture Component Activations Over Time =======
+        # Create activation heatmap from accumulated data
+        if len(component_activations) > 1:
+            activation_array = np.array(component_activations).T  # Components x Time
+
+            # Plot as heatmap
+            im_activation = ax6.imshow(
+                activation_array, aspect="auto", cmap="viridis", interpolation="nearest", origin="lower"
+            )
+
+            ax6.set_xlabel("Time Step")
+            ax6.set_ylabel("Component Index")
+            ax6.set_title(f"Mixture Component Activations (Step 2-{t})")
+
+            # Add colorbar
+            plt.colorbar(im_activation, ax=ax6, label="Activation Weight", shrink=0.8)
+
+            # Set x-axis to show actual step numbers
+            num_steps = len(component_activations)
+            if num_steps > 10:
+                step_indices = np.linspace(0, num_steps - 1, 10, dtype=int)
+                ax6.set_xticks(step_indices)
+                ax6.set_xticklabels([str(i + 2) for i in step_indices])
+
+            # Highlight most active components
+            mean_activations = np.mean(activation_array, axis=1)
+            top_3_components = np.argsort(mean_activations)[-3:][::-1]
+            for rank, comp in enumerate(top_3_components):
+                ax6.axhline(y=comp, color="red", linestyle="--", alpha=0.5, linewidth=1)
+                ax6.text(num_steps * 0.98, comp, f"#{rank + 1}", color="red", fontsize=8, va="center", ha="right")
+        else:
+            ax6.text(
+                0.5, 0.5, "Waiting for more data...", transform=ax6.transAxes, ha="center", va="center", fontsize=12
+            )
+            ax6.set_title("Mixture Component Activations")
+            ax6.axis("off")
 
         # Log EOS information for analysis
-        avg_variance = np.mean(params['sigma_x']**2 + params['sigma_y']**2)
-        eos_log.append({
-            'step': t,
-            'eos_pred': params['eos'][0],
-            'actual_eos': actual_eos,
-            'avg_variance': avg_variance,
-            'max_component_weight': params['pi'].max(),
-            'entropy': -np.sum(params['pi'] * np.log(params['pi'] + 1e-10))
-        })
+        avg_variance = np.mean(params["sigma_x"] ** 2 + params["sigma_y"] ** 2)
+        eos_log.append(
+            {
+                "step": int(t),
+                "eos_pred": float(params["eos"][0]),
+                "actual_eos": bool(actual_eos),
+                "avg_variance": float(avg_variance),
+                "max_component_weight": float(params["pi"].max()),
+                "entropy": float(-np.sum(params["pi"] * np.log(params["pi"] + 1e-10))),
+            }
+        )
 
         # Add enhanced info text with EOS information
         info_text = f"Context: {t} points\n"
-        info_text += f"EOS Prediction: {params['eos'][0]:.3f} {'🔴 HIGH!' if is_eos_prediction else '🟢'}\n"
-        info_text += f"Actual EOS: {'YES 🔴' if actual_eos else 'NO 🟢'}\n"
+        info_text += f"EOS Prediction: {params['eos'][0]:.3f} {'HIGH!' if is_eos_prediction else 'Normal'}\n"
+        info_text += f"Actual EOS: {'YES' if actual_eos else 'NO'}\n"
         info_text += f"Top component weight: {params['pi'].max():.3f}\n"
         info_text += f"Entropy: {-np.sum(params['pi'] * np.log(params['pi'] + 1e-10)):.3f}\n"
 
@@ -514,34 +674,34 @@ def visualize_prediction_sequence(
     else:
         print(f"⚠️ Not enough valid frames ({len(figures)}), skipping GIF creation")
 
-    # Clean up frame files
-    for t in range(2, seq_len):
-        os.remove(os.path.join(frame_dir, f"frame_{t:03d}.png"))
-    os.rmdir(frame_dir)
+    # Keep frame files - don't clean up!
+    print(f"🖼️ Individual frames preserved in: {frame_dir}")
+    print(f"📊 Total frames saved: {len(figures)}")
 
     # Save EOS analysis
-    eos_analysis_path = save_path.replace('.gif', '_eos_analysis.json')
+    eos_analysis_path = save_path.replace(".gif", "_eos_analysis.json")
     import json
-    with open(eos_analysis_path, 'w') as f:
+
+    with open(eos_analysis_path, "w") as f:
         json.dump(eos_log, f, indent=2)
 
     # Print EOS summary
-    eos_predictions = [x for x in eos_log if x['eos_pred'] > 0.3]
-    actual_eos_points = [x for x in eos_log if x['actual_eos']]
-    high_variance_points = [x for x in eos_log if x['avg_variance'] > 10.0]
+    eos_predictions = [x for x in eos_log if x["eos_pred"] > 0.08]
+    actual_eos_points = [x for x in eos_log if x["actual_eos"]]
+    high_variance_points = [x for x in eos_log if x["avg_variance"] > 10.0]
 
-    print(f"\n📊 EOS ANALYSIS SUMMARY:")
-    print(f"   High EOS predictions (>0.3): {len(eos_predictions)}")
+    print("\n📊 EOS ANALYSIS SUMMARY:")
+    print(f"   High EOS predictions (>0.08): {len(eos_predictions)}")
     print(f"   Actual EOS points: {len(actual_eos_points)}")
     print(f"   High variance predictions (>10): {len(high_variance_points)}")
     print(f"   EOS analysis saved to: {eos_analysis_path}")
 
     if len(eos_predictions) > 0:
-        avg_variance_at_eos_pred = np.mean([x['avg_variance'] for x in eos_predictions])
+        avg_variance_at_eos_pred = np.mean([x["avg_variance"] for x in eos_predictions])
         print(f"   Average variance at high EOS predictions: {avg_variance_at_eos_pred:.2f}")
 
     if len(actual_eos_points) > 0:
-        avg_eos_pred_at_actual = np.mean([x['eos_pred'] for x in actual_eos_points])
+        avg_eos_pred_at_actual = np.mean([x["eos_pred"] for x in actual_eos_points])
         print(f"   Average EOS prediction at actual EOS: {avg_eos_pred_at_actual:.3f}")
 
     print(f"✅ GIF saved to {save_path}")

@@ -4,11 +4,7 @@ import os
 import numpy as np
 import tensorflow as tf
 from alphabet import ALPHABET_SIZE
-from callbacks import (
-    ExtendedModelCheckpoint,
-    ModelCheckpointWithPeriod,
-    PrintModelParametersCallback,
-)
+from callbacks import ExtendedModelCheckpoint, ModelCheckpointWithPeriod, PrintModelParametersCallback
 from constants import (
     BATCH_SIZE,
     GRADIENT_CLIP_VALUE,
@@ -17,9 +13,7 @@ from constants import (
     NUM_BIVARIATE_GAUSSIAN_MIXTURE_COMPONENTS,
 )
 from loader import HandwritingDataLoader
-from model.handwriting_models import (
-    DeepHandwritingSynthesisModel,
-)
+from model.handwriting_models import DeepHandwritingSynthesisModel
 
 # We want this to ensure CPU <-> GPU compatibility
 tf.keras.mixed_precision.set_global_policy("float32")
@@ -68,22 +62,28 @@ if __name__ == "__main__":
     y_train[:, :-1, :] = x_train[:, 1:, :]
     y_train_len = x_train_len - 1
 
-    # Preparing the transcription information
+    # dbeugging check
+    print(f"Original input lengths - min: {x_train_len.min()}, max: {x_train_len.max()}")
+    print(f"Target lengths - min: {y_train_len.min()}, max: {y_train_len.max()}")
+    print(f"Number of sequences with target_len <= 0: {(y_train_len <= 0).sum()}")
+    y_train_len = np.maximum(y_train_len, 1)
+
     char_seq = combined_train_trans
     char_seq_len = combined_trans_lengths
 
     best_loss = float("inf")
     batch_size = BATCH_SIZE
     print(f"Debugging info: {debugging_dir}")
-    tf.debugging.experimental.enable_dump_debug_info(
-        debugging_dir, tensor_debug_mode="FULL_HEALTH", circular_buffer_size=-1
-    )
+    # tf.debugging.experimental.enable_dump_debug_info(  # Disabled for XLA compatibility
+    #     debugging_dir, tensor_debug_mode="FULL_HEALTH", circular_buffer_size=-1
+    # )
 
     dataset = tf.data.Dataset.from_tensor_slices(
         (
             {
                 "input_strokes": x_train,
                 "input_stroke_lens": x_train_len,
+                "target_stroke_lens": y_train_len,
                 "input_chars": char_seq,
                 "input_char_lens": char_seq_len,
             },
@@ -110,10 +110,14 @@ if __name__ == "__main__":
             learning_rate=learning_rate_schedule,
             global_clipnorm=GRADIENT_CLIP_VALUE,
         ),
+        loss=None,  # i don't think we need this because we have a custom loss function
+        run_eagerly=True,
     )
 
     callbacks = [
-        tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1, profile_batch="500,520"),
+        # Disabled for XLA compatibility
+        # tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1, profile_batch="500,520"),
+        tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=0),  # Basic logging only for XLA compatibility
         ModelCheckpointWithPeriod(model_name, period=200),
         ExtendedModelCheckpoint(model_name),
         PrintModelParametersCallback(),

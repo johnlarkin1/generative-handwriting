@@ -120,20 +120,20 @@ class MixtureDensityLayer(tf.keras.layers.Layer):
         reg_loss = self._compute_regularization(pi, sigma, rho)
         self.add_loss(reg_loss)
 
-        eos = tf.sigmoid(tf.matmul(inputs, self.W_eos) + self.b_eos)
-        eos = tf.reshape(eos, [-1, inputs.shape[1], 1])
+        eos_logit = tf.matmul(inputs, self.W_eos) + self.b_eos
+        eos = tf.reshape(eos_logit, [-1, inputs.shape[1], 1])
 
         outputs = tf.concat([pi, mu1, mu2, sigma1, sigma2, rho, eos], axis=2)
 
         # Validate shapes match expected dimensions but allow dynamic batch size
-        tf.debugging.assert_rank(pi, 3, message="pi must be rank 3 [batch, time, components]")
-        tf.debugging.assert_rank(mu1, 3, message="mu1 must be rank 3 [batch, time, components]")
-        tf.debugging.assert_rank(mu2, 3, message="mu2 must be rank 3 [batch, time, components]")
-        tf.debugging.assert_rank(sigma1, 3, message="sigma1 must be rank 3 [batch, time, components]")
-        tf.debugging.assert_rank(sigma2, 3, message="sigma2 must be rank 3 [batch, time, components]")
-        tf.debugging.assert_rank(rho, 3, message="rho must be rank 3 [batch, time, components]")
-        tf.debugging.assert_rank(eos, 3, message="eos must be rank 3 [batch, time, 1]")
-        tf.debugging.assert_rank(outputs, 3, message="outputs must be rank 3 [batch, time, features]")
+        # tf.debugging.assert_rank(pi, 3, message="pi must be rank 3 [batch, time, components]")  # Disabled for XLA compatibility
+        # tf.debugging.assert_rank(mu1, 3, message="mu1 must be rank 3 [batch, time, components]")  # Disabled for XLA compatibility
+        # tf.debugging.assert_rank(mu2, 3, message="mu2 must be rank 3 [batch, time, components]")  # Disabled for XLA compatibility
+        # tf.debugging.assert_rank(sigma1, 3, message="sigma1 must be rank 3 [batch, time, components]")  # Disabled for XLA compatibility
+        # tf.debugging.assert_rank(sigma2, 3, message="sigma2 must be rank 3 [batch, time, components]")  # Disabled for XLA compatibility
+        # tf.debugging.assert_rank(rho, 3, message="rho must be rank 3 [batch, time, components]")  # Disabled for XLA compatibility
+        # tf.debugging.assert_rank(eos, 3, message="eos must be rank 3 [batch, time, 1]")  # Disabled for XLA compatibility
+        # tf.debugging.assert_rank(outputs, 3, message="outputs must be rank 3 [batch, time, features]")  # Disabled for XLA compatibility
         return outputs
 
     def get_config(self):
@@ -222,12 +222,10 @@ def mdn_loss(y_true, y_pred, stroke_lengths, num_components, eps=1e-6):
     ))
     log_mixture = tf.squeeze(log_mixture, axis=2)
 
-    # Calculate bernoulli log likelihood for end-of-stroke with safer operations
-    out_eos = tf.clip_by_value(out_eos, eps, 1.0 - eps)
-    eos_logits = tf.math.log(out_eos)
-    non_eos_logits = tf.math.log(1.0 - out_eos)
-    bernoulli_logits = tf.where(tf.equal(tf.ones_like(eos_data), eos_data), eos_logits, non_eos_logits)
-    log_bernoulli = tf.squeeze(bernoulli_logits)
+    # Calculate bernoulli log likelihood for end-of-stroke using logits
+    eos_logit = out_eos  # rename for clarity - this is now logits, not probabilities
+    bernoulli_nll = tf.nn.sigmoid_cross_entropy_with_logits(labels=eos_data, logits=eos_logit)
+    log_bernoulli = -tf.squeeze(bernoulli_nll)  # negative because our nll is -(log_mixture + log_bernoulli)
 
     # Combine log likelihoods
     total_log_likelihood = log_mixture + log_bernoulli

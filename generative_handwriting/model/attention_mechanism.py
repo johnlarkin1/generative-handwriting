@@ -21,23 +21,22 @@ class AttentionMechanism(tf.keras.layers.Layer):
     def build(self, input_shape):
         self.dense_attention = tf.keras.layers.Dense(
             units=3 * self.num_gaussians,
-            activation="softplus",
+            activation=None,  # No activation - we'll apply exp manually
             name=f"{self.name_mod}_dense",
         )
         super().build(input_shape)
 
     def call(self, inputs, prev_kappa, char_seq_one_hot, sequence_lengths):
-        # Generate concatenated attention parameters - just utilizing
-        # the dense layer so that I don't have to manually define the matrix
-        attention_params = self.dense_attention(inputs)
-        alpha, beta, kappa_increment = tf.split(attention_params, 3, axis=1)
+        # Generate concatenated attention parameters - use raw outputs, apply exp manually
+        raw = self.dense_attention(inputs)
+        alpha_hat, beta_hat, kappa_hat = tf.split(raw, 3, axis=1)
 
-        # Normalize and clip kappa and beta...
-        alpha = tf.maximum(alpha, 1e-8)
-        beta = tf.maximum(beta, 1e-8)
-        kappa_increment = tf.maximum(kappa_increment, 1e-8)
+        # Apply exp activation as in Graves eq. 48-51
+        alpha = tf.exp(alpha_hat)
+        beta = tf.exp(beta_hat)
+        kappa = prev_kappa + tf.exp(kappa_hat)  # Cumulative kappa with positive increment
 
-        kappa = prev_kappa + kappa_increment
+        # Tiling 'enum' across batch size and number of attention mixture components
         char_len = tf.shape(char_seq_one_hot)[1]
         batch_size = tf.shape(inputs)[0]
         u = tf.cast(tf.range(0, char_len), tf.float32)  # Shape: [char_len]

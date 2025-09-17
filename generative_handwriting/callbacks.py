@@ -1,6 +1,7 @@
 import os
 
 import numpy as np
+import tensorflow as tf
 from common import print_model_parameters
 from tensorflow.keras.callbacks import Callback, ModelCheckpoint
 
@@ -9,7 +10,20 @@ class PrintModelParametersCallback(Callback):
     def on_epoch_end(self, epoch, logs=None):
         if epoch == 0:
             print("Model parameters after the 1st epoch:")
-            self.model.summary()
+            try:
+                # this was freaking out with the model.summary() i believe
+                sample_input_shapes = {
+                    "input_strokes": (None, None, 3),  # dynamic batch and sequence length
+                    "input_chars": (None, None),  # dynamic batch and char length
+                    "input_char_lens": (None,),  # batch size only
+                }
+                self.model.build(sample_input_shapes)
+                self.model.summary()
+            except (ValueError, AttributeError, TypeError) as e:
+                print(f"Cannot display model summary: {e}")
+                print("Model summary unavailable for complex attention-based synthesis model")
+                total_params = sum(tf.size(var).numpy() for var in self.model.trainable_variables)
+                print(f"Total trainable parameters: {total_params:,}")
             print_model_parameters(self.model)
 
 

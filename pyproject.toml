@@ -23,38 +23,48 @@ markers = [
     "end_to_end_test: Tests the behavior of a full application, end-to-end."
 ]
 testpaths = [
-    "tests"
+    "generative_handwriting/test"
+]
+# Skip files that contain training scripts rather than actual tests
+python_files = [
+    "test_*.py",
+    "!test_basic_mdn.py",
+    "!test_handwriting_mdn.py",
+    "!test_handwriting_prediction_batched.py",
+    "!test_handwriting_prediction_single_batch.py",
+    "!test_handwriting_synthesis_single_batch.py",
+    "!test_handwriting_synthesis_single_batch_optimized.py",
+    "!test_lstm_deep_single_stroke.py",
+    "!test_lstm_simple.py",
+    "!test_lstm_simple_clean.py",
+    "!test_lstm_simplest.py",
+    "!test_mdn.py",
+    "!test_mdn_simple_clean.py"
 ]
 
-[project]
+[tool.poetry]
 name = "generating-handwriting"
 version = "1.0.0"
 description = "A package to recreate the seminal work of Alex Graves in handwriting synthesis."
-authors = [{ name = "john", email = "john@johnjlarkin.com" }]
+authors = ["john <john@johnjlarkin.com>"]
 readme = "README.md"
-requires-python = ">=3.11,<3.13"
-dependencies = [
-    "torch>=2.4.0",
-    "torchvision>=0.19.0",
-    "torchaudio>=2.4.0",
-    "imageio>=2.37.0",
-    "matplotlib>=3.10.0",
-    "tqdm>=4.67.1",
-    "aider-install>=0.1.3",
-    "scipy>=1.15.1",
-    "tensorboard>=2.17.0",
-]
+packages = [{include = "generative_handwriting"}]
 
-[project.optional-dependencies]
-dev = [
-    "ruff>=0.9.1",
-    "pytest>=8.3.4",
-    "mypy>=1.14.1",
-]
+[tool.poetry.dependencies]
+python = ">=3.11,<3.13"
+tensorflow = "2.18.0"
+numpy = "~2.0.0"
+matplotlib = "^3.10.0"
+imageio = "^2.37.0"
+tqdm = "^4.67.0"
+scipy = "^1.14.0"
+tensorboard = "^2.17.0"
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.9.1"
+pytest = "^8.3.4"
+mypy = "^1.14.1"
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["generative_handwriting"]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
