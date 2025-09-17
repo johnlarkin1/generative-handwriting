@@ -9,6 +9,7 @@ This is a handwriting synthesis project that implements Alex Graves' paper "Gene
 ## Commands
 
 ### Dependency Management
+
 ```bash
 poetry install                        # Install dependencies
 poetry install --with dev             # Install with dev dependencies
@@ -17,6 +18,7 @@ poetry shell                          # Activate virtual environment
 ```
 
 ### Code Quality
+
 ```bash
 poetry run ruff check generative_handwriting          # Linting
 poetry run ruff check --fix generative_handwriting    # Linting with auto-fix
@@ -25,6 +27,7 @@ poetry run mypy generative_handwriting                # Type checking
 ```
 
 ### Testing
+
 ```bash
 poetry run pytest                                 # Run all tests
 poetry run pytest -m unit_test                    # Run unit tests only
@@ -34,12 +37,14 @@ poetry run pytest <test_file>::<test_function>    # Run single test
 ```
 
 ### Training
+
 ```bash
 poetry run python generative_handwriting/train_handwriting_prediction.py    # Train prediction model
 poetry run python generative_handwriting/train_handwriting_synthesis.py     # Train synthesis model
 ```
 
 ### Monitoring & Visualization
+
 ```bash
 poetry run python generative_handwriting/monitor_training.py              # Check training status
 poetry run python generative_handwriting/monitor_training.py --watch      # Live monitoring (every 60s)
@@ -51,6 +56,7 @@ poetry run python generative_handwriting/visualize_predictions.py         # Gene
 ### Core Model Components (`generative_handwriting/model/`)
 
 - **handwriting_models.py**: Main model classes
+
   - `SimpleLSTMModel`: Basic LSTM model for sequence prediction
   - `SimpleHandwritingPredictionModel`: Single-layer LSTM with peephole connections
   - `DeepHandwritingPredictionModel`: Multi-layer LSTM with MDN output
@@ -92,11 +98,13 @@ poetry run python generative_handwriting/visualize_predictions.py         # Gene
 ### Test Structure
 
 Tests in `generative_handwriting/test/` are organized by complexity:
+
 - **Unit tests** (`test_lstm.py`, `test_basic_mdn.py`): Test individual components
 - **Integration tests** (`test_handwriting_prediction_*.py`): Test model training loops
 - **End-to-end tests** (`test_handwriting_synthesis_*.py`): Full synthesis pipeline
 
 Note: Tests are marked with pytest markers defined in `pyproject.toml`:
+
 - `unit_test`: Isolated function tests
 - `integration_test`: Tests with external dependencies
 - `end_to_end_test`: Complete workflow tests
@@ -104,3 +112,49 @@ Note: Tests are marked with pytest markers defined in `pyproject.toml`:
 ## Data
 
 Training data is located in `generative_handwriting/data/` with train/validation/test splits in text files. The project expects IAM handwriting dataset format.
+
+## Reference Implementation
+
+This repository includes `handwriting-synthesis/`, a **TensorFlow 1.x reference implementation** of the same paper by Sean Vasquez. This serves as a working baseline for comparison and debugging.
+
+### Project Structure
+
+```
+handwriting-synthesis/                    # Reference TensorFlow implementation
+├── demo.py                               # Main interface (Hand class)
+├── rnn.py                                # Core LSTM+attention model
+├── tf_base_model.py                      # Training infrastructure
+├── rnn_cell.py                           # Custom LSTM cell with attention
+├── drawing.py                            # Stroke processing & SVG generation
+├── checkpoints/                          # Pre-trained model weights
+└── styles/                               # Pre-computed style vectors (0-12)
+```
+
+### Key Differences from Our Implementation
+
+- **Framework**: TensorFlow 1.x vs. our modern architecture
+- **Pre-trained**: Includes working model checkpoints and style vectors (0-12)
+- **Interface**: `Hand` class provides simple text-to-SVG generation
+- **Limitations**: 75 chars/line, missing some punctuation, TF 1.x dependency
+
+### Usage for Comparison
+
+```python
+# Generate samples using reference implementation
+from handwriting_synthesis.demo import Hand
+
+hand = Hand()
+hand.write(
+    filename='reference_output.svg',
+    lines=['Your text here'],
+    biases=[0.75],    # 0-1 (neatness)
+    styles=[9],       # 0-12 (writer style)
+)
+```
+
+### Value for Development
+
+- **Debugging**: Compare outputs between implementations
+- **Hyperparameters**: Reference working settings
+- **Architecture validation**: Cross-check model topology
+- **Quality baseline**: Expected output quality benchmarks
