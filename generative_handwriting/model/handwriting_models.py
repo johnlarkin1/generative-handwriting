@@ -197,6 +197,10 @@ class DeepHandwritingSynthesisModel(tf.keras.Model):
         self.rnn_layer = tf.keras.layers.RNN(self.attention_rnn_cell, return_sequences=True)
         self.mdn_layer = MixtureDensityLayer(num_mixture_components)
 
+        # Metric trackers for proper loss aggregation
+        self.loss_tracker = tf.keras.metrics.Mean(name="loss")
+        self.nll_tracker = tf.keras.metrics.Mean(name="nll")
+
     def call(
         self, inputs: Dict[str, tf.Tensor], training: Optional[bool] = None, mask: Optional[tf.Tensor] = None
     ) -> tf.Tensor:
@@ -230,29 +234,29 @@ class DeepHandwritingSynthesisModel(tf.keras.Model):
         final_output = self.mdn_layer(outputs)
         return final_output
 
+    @property
+    def metrics(self):
+        # Tells Keras what metrics to reset/aggregate each epoch
+        return [self.loss_tracker, self.nll_tracker]
+
     def train_step(self, data: Tuple[Dict[str, tf.Tensor], tf.Tensor]) -> Dict[str, tf.Tensor]:
         inputs, y_true = data
         target_stroke_lens = inputs["target_stroke_lens"]
         with tf.GradientTape() as tape:
             y_pred = self(inputs, training=True)
             nll = mdn_loss(y_true, y_pred, target_stroke_lens, self.num_mixture_components)
-            # Add layer regularizers (e.g., from MixtureDensityLayer)
-            total_loss = nll + tf.add_n(self.losses)
-            loss = total_loss
+            # Add layer regularization losses (e.g., from MixtureDensityLayer)
+            reg = tf.add_n(self.losses) if self.losses else 0.0
+            loss = nll + reg
 
         gradients = tape.gradient(loss, self.trainable_variables)
-        clipped_grads_and_vars = [
-            (tf.clip_by_value(g, -1 * self.gradient_clip_value, self.gradient_clip_value), v_)
-            for g, v_ in zip(gradients, self.trainable_variables, strict=False)
-        ]
+        # Use optimizer's global_clipnorm instead of manual clipping to avoid double clipping
+        self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
-        self.optimizer.apply_gradients(clipped_grads_and_vars)
-        # We only really care about the log likelihood loss
-        # here as tracking. The other metrics are not as important
-        # Doing anything like comparing y_true and y_pred is not
-        # really useful here because the MDN output shape
-        # is not the same as the y_true shape.
-        return {"loss": loss}
+        # Update metrics so callbacks/History see real numbers
+        self.nll_tracker.update_state(nll)
+        self.loss_tracker.update_state(loss)
+        return {"loss": self.loss_tracker.result(), "nll": self.nll_tracker.result()}
 
     def build(self, inputs_by_name_shape: Union[Dict[str, Tuple[int, ...]], Tuple[int, ...]]) -> None:
         # Input here is going to look like:

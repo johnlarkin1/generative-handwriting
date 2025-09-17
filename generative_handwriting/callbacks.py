@@ -11,14 +11,14 @@ class PrintModelParametersCallback(Callback):
         if epoch == 0:
             print("Model parameters after the 1st epoch:")
             try:
-                # this was freaking out with the model.summary() i believe
-                sample_input_shapes = {
-                    "input_strokes": (None, None, 3),  # dynamic batch and sequence length
-                    "input_chars": (None, None),  # dynamic batch and char length
-                    "input_char_lens": (None,),  # batch size only
-                }
-                self.model.build(sample_input_shapes)
-                self.model.summary()
+                # Only try to show summary if model isn't already built
+                # Avoid calling build() after model is already built
+                if hasattr(self.model, '_is_built') and self.model._is_built:
+                    print("Model summary unavailable for complex attention-based synthesis model")
+                    total_params = sum(tf.size(var).numpy() for var in self.model.trainable_variables)
+                    print(f"Total trainable parameters: {total_params:,}")
+                else:
+                    self.model.summary()
             except (ValueError, AttributeError, TypeError) as e:
                 print(f"Cannot display model summary: {e}")
                 print("Model summary unavailable for complex attention-based synthesis model")
@@ -53,7 +53,7 @@ class ModelCheckpointWithPeriod(ModelCheckpoint):
         model_dir = os.path.join(self.base_dir, "saved_models", model_name)
         os.makedirs(model_dir, exist_ok=True)
         filepath = os.path.join(model_dir, "model_{epoch:02d}_{loss:.2f}.keras")
-        super().__init__(filepath, save_best_only=False, **kwargs)
+        super().__init__(filepath, save_best_only=False, monitor="loss", mode="min", **kwargs)
 
     def on_epoch_end(self, epoch: int, logs=None) -> None:
         # Adjusting to ensure it saves on epoch 1 then every 'period' epochs thereafter

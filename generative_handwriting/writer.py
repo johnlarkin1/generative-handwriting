@@ -32,9 +32,9 @@ class Calligrapher:
         self,
         model_path: str,
         num_output_mixtures: int,
-        sigma_min: float = 1e-4,
-        sigma_max: float = 1e4,
-        rho_max: float = 0.99,
+        sigma_min: float = 2e-3,
+        sigma_max: float = 3.0,
+        rho_max: float = 0.95,
     ) -> None:
         """Initialize the Calligrapher.
 
@@ -120,9 +120,17 @@ class Calligrapher:
         Returns:
             Tuple of adjusted parameters
         """
-        # Adjust standard deviations
-        sigma1_adj = np.exp(np.log(sigma1) - bias) * np.sqrt(temperature)
-        sigma2_adj = np.exp(np.log(sigma2) - bias) * np.sqrt(temperature)
+        # Clamp sigmas before adjustment to prevent explosion
+        sigma1 = np.clip(sigma1, self.sigma_min, self.sigma_max)
+        sigma2 = np.clip(sigma2, self.sigma_min, self.sigma_max)
+
+        # Adjust standard deviations with stronger reduction
+        sigma1_adj = np.exp(np.log(sigma1) - bias * 2) * np.sqrt(temperature)
+        sigma2_adj = np.exp(np.log(sigma2) - bias * 2) * np.sqrt(temperature)
+
+        # Ensure adjusted sigmas stay within bounds
+        sigma1_adj = np.clip(sigma1_adj, self.sigma_min, self.sigma_max)
+        sigma2_adj = np.clip(sigma2_adj, self.sigma_min, self.sigma_max)
 
         # Adjust mixture weights (pi is already probabilities, not logits)
         pi_adj = np.power(pi, (1 + bias) / temperature)
@@ -131,9 +139,18 @@ class Calligrapher:
         return pi_adj, mu1, mu2, sigma1_adj, sigma2_adj, rho
 
     def sample(
-        self, lines: List[str], max_char_len: int = MAX_CHAR_LEN, bias: float = 0.0, temperature: float = 1.0
+        self,
+        lines: List[str],
+        max_char_len: int = MAX_CHAR_LEN,
+        bias: float = 0.0,
+        temperature: float = 1.0,
+        max_steps: Optional[int] = None,
+        eos_threshold_up: float = 0.7,
+        eos_threshold_down: float = 0.3,
+        burn_in_steps: int = 20,
+        greedy: bool = False,
     ) -> Tuple[List[np.ndarray], np.ndarray]:
-        """Sample handwriting sequences for given lines of text.
+        """Sample handwriting sequences for given lines of text using autoregressive generation.
 
         Args:
             lines: List of text strings to render
@@ -143,6 +160,11 @@ class Calligrapher:
             temperature: Controls randomness in sampling (0.1-1.0)
                 Lower values produce more consistent writing
                 Higher values produce more varied writing
+            max_steps: Maximum number of generation steps (auto-determined if None)
+            eos_threshold_up: Threshold for pen up when currently pen down (hysteresis)
+            eos_threshold_down: Threshold for pen down when currently pen up (hysteresis)
+            burn_in_steps: Number of initial steps to run without recording
+            greedy: Whether to use greedy component selection instead of sampling
 
         Returns:
             Tuple of (sampled_points, end_of_stroke_probs)
@@ -153,71 +175,150 @@ class Calligrapher:
         if not lines:
             raise ValueError("Must provide at least one line of text")
 
-        # Encode input text
-        encoded_lines = np.array([encode_ascii(line) for line in lines])
-        batch_size = len(encoded_lines)
+        # ---- Encode characters (per batch) ----
+        enc = [encode_ascii(line)[:max_char_len] for line in lines]
+        B = len(enc)
+        char_seq = np.zeros((B, max_char_len), dtype=np.int32)
+        char_len = np.array([len(e) for e in enc], dtype=np.int32)
+        for i, e in enumerate(enc):
+            char_seq[i, : len(e)] = e
 
-        # Prepare model inputs
-        x_in = np.zeros((batch_size, max_char_len, 3), dtype=np.float32)
-        char_seq_len = np.array([len(line) for line in lines])
-        char_seq = np.zeros((len(lines), max_char_len), dtype=int)
+        # Heuristic: strokes are longer than chars; pick a sane horizon if not provided
+        if max_steps is None:
+            max_steps = max(60, int(18 * np.max(char_len)))
 
-        for i, line in enumerate(encoded_lines):
-            char_seq[i, : len(line)] = line
+        # ---- Bind character sequence to the attention cell ----
+        cell = self.model.attention_rnn_cell
+        cell.char_seq_one_hot = tf.one_hot(char_seq, depth=self.model.num_chars)
+        cell.char_seq_len = tf.convert_to_tensor(char_len, dtype=tf.int32)
 
-        # Get model predictions
-        mdn_outputs = self.model({"input_strokes": x_in, "input_chars": char_seq, "input_char_lens": char_seq_len})
+        # ---- Initial recurrent state & first input (pen up) ----
+        init = cell.get_initial_state(batch_size=B, dtype=tf.float32)
+        state_list = []
+        for i in range(self.model.num_layers):
+            state_list.extend([init[f"lstm_{i}_h"], init[f"lstm_{i}_c"]])
+        state_list.extend([init["kappa"], init["w"]])
 
-        # Split outputs into components
-        # NOTE: MDN layer outputs already transformed values (pi is softmaxed, sigma is exp'd, rho is tanh'd)
-        pi, mu1, mu2, sigma1, sigma2, rho, eos_logits = tf.split(
-            mdn_outputs, [self.num_output_mixtures] * 6 + [1], axis=-1
-        )
+        x_prev = tf.constant(np.tile([[0.0, 0.0, 0.0]], (B, 1)), dtype=tf.float32)  # (dx, dy, pen_up=0 to start writing)
 
-        # Apply temperature and bias adjustments
-        if bias != 0.0 or temperature != 1.0:
-            pi, mu1, mu2, sigma1, sigma2, rho = self.adjust_parameters(
-                pi.numpy(),  # Already softmaxed
-                mu1.numpy(),
-                mu2.numpy(),
-                sigma1.numpy(),
-                sigma2.numpy(),
-                rho.numpy(),
-                bias,
-                temperature,
+        K = self.num_output_mixtures
+        sequences: List[List[Tuple[float, float, float]]] = [[] for _ in range(B)]
+        eos_probs_log: List[List[float]] = [[] for _ in range(B)]
+
+        # Track pen state with hysteresis
+        prev_up_bin = np.zeros(B, dtype=np.int32)  # Start with pen down to encourage writing
+
+        for t in range(max_steps + burn_in_steps):
+            # One recurrent step through the cell
+            h_t, state_list = cell(x_prev, state_list)             # h_t: [B, units]
+            mdn_t = self.model.mdn_layer(h_t[:, None, :])[:, 0, :] # [B, 6K+1]
+
+            # Split parameters
+            pi, mu1, mu2, s1, s2, rho, eos_logit = tf.split(mdn_t, [K, K, K, K, K, K, 1], axis=-1)
+            pi, mu1, mu2, s1, s2, rho = [
+                a.numpy() for a in (pi, mu1, mu2, s1, s2, rho)
+            ]
+            eos_prob = 1.0 / (1.0 + np.exp(-eos_logit.numpy().reshape(-1) / max(1e-6, temperature)))
+
+            # Temperature/bias adjustment (pi already prob., sigmas positive)
+            pi, mu1, mu2, s1, s2, rho = self.adjust_parameters(
+                pi, mu1, mu2, s1, s2, rho, bias=bias, temperature=temperature
             )
-        else:
-            pi = pi.numpy()  # Already softmaxed, no need to apply softmax again
 
-        # Sample from mixture
-        indices = [np.random.choice(self.num_output_mixtures, p=pi[i]) for i in range(pi.shape[0])]
-        indices = np.array(indices)[:, np.newaxis]
+            # Sample each batch item and feed back as next input
+            x_prev_np = np.zeros((B, 3), dtype=np.float32)
 
-        # Select components based on sampled indices
-        selected = {
-            "mu1": np.take_along_axis(mu1, indices, axis=-1),
-            "mu2": np.take_along_axis(mu2, indices, axis=-1),
-            "sigma1": np.take_along_axis(sigma1, indices, axis=-1),
-            "sigma2": np.take_along_axis(sigma2, indices, axis=-1),
-            "rho": np.take_along_axis(rho, indices, axis=-1),
-        }
+            for b in range(B):
+                p = pi[b] / np.clip(pi[b].sum(), 1e-8, None)
 
-        # Generate points
-        sampled_points = [
-            self.sample_gaussian_2d(
-                selected["mu1"][i, 0],
-                selected["mu2"][i, 0],
-                selected["sigma1"][i, 0],
-                selected["sigma2"][i, 0],
-                selected["rho"][i, 0],
-            )
-            for i in range(pi.shape[0])
-        ]
+                # Greedy or probabilistic component selection
+                if greedy:
+                    k = np.argmax(p)
+                else:
+                    k = np.random.choice(K, p=p)
 
-        # Sample end-of-stroke probabilities from logits with temperature
-        eos_prob = tf.sigmoid(eos_logits / temperature).numpy()
+                # For very stable generation, optionally use means directly
+                if bias > 0.7:  # High bias = use means directly for stability
+                    dx = mu1[b, k] * 0.1  # Scale down means significantly
+                    dy = mu2[b, k] * 0.1
+                else:
+                    dx, dy = self.sample_gaussian_2d(
+                        mu1[b, k], mu2[b, k], s1[b, k], s2[b, k], rho[b, k]
+                    )
+                    # Scale down the sampled values
+                    dx *= 0.1
+                    dy *= 0.1
 
-        return sampled_points, eos_prob
+                # Additional clamping for safety
+                max_delta = 1.0  # Much smaller maximum movement
+                dx = np.clip(dx, -max_delta, max_delta)
+                dy = np.clip(dy, -max_delta, max_delta)
+
+                # Hysteresis thresholding for pen state
+                if prev_up_bin[b]:
+                    pen_up_bin = float(eos_prob[b] > eos_threshold_down)
+                else:
+                    pen_up_bin = float(eos_prob[b] > eos_threshold_up)
+                prev_up_bin[b] = int(pen_up_bin)
+
+                # Only record points after burn-in period
+                if t >= burn_in_steps:
+                    # Accumulate deltas -> absolute coordinates for drawing
+                    if len(sequences[b]) == 0:
+                        abs_x, abs_y = dx, dy
+                    else:
+                        prev_x, prev_y, _ = sequences[b][-1]
+                        abs_x, abs_y = prev_x + dx, prev_y + dy
+
+                    sequences[b].append((abs_x, abs_y, pen_up_bin))
+                    eos_probs_log[b].append(eos_prob[b])
+
+                x_prev_np[b] = (dx, dy, pen_up_bin)
+
+            x_prev = tf.convert_to_tensor(x_prev_np, dtype=tf.float32)
+
+            # Stop condition: attention has passed the end of text and pen is mostly up
+            if t >= burn_in_steps + 20:  # Give some time after burn-in
+                kappa = state_list[-2].numpy()  # Attention position
+                attention_done = (kappa.mean(axis=1) > (char_len + 1.5)).all()
+                pen_mostly_up = np.mean(eos_prob) > 0.6
+
+                if attention_done and pen_mostly_up:
+                    break
+
+        # Convert to arrays and apply scaling for SVG display
+        sequences_arrays = []
+        for seq in sequences:
+            if len(seq) == 0:
+                sequences_arrays.append([])
+                continue
+
+            # Extract coordinates and pen states
+            coords = np.array([(x, y) for x, y, _ in seq])
+            pen_states = [pen_up for _, _, pen_up in seq]
+
+            # Only scale if coordinates are reasonable
+            if len(coords) > 0:
+                # Shift to origin
+                coords -= coords.min(axis=0)
+
+                # Scale more conservatively
+                x_range = coords[:, 0].max() - coords[:, 0].min()
+                y_range = coords[:, 1].max() - coords[:, 1].min()
+
+                if x_range > 0:
+                    # Scale to fit width, but not too aggressively
+                    scale = min(50.0, 800.0 / x_range)  # Cap scaling factor
+                    coords *= scale
+
+                # Center vertically
+                coords[:, 1] += 30  # Offset from top
+
+            # Reconstruct with scaled coordinates and preserved pen states
+            scaled_seq = [(float(coords[j][0]), float(coords[j][1]), pen_states[j]) for j in range(len(coords))]
+            sequences_arrays.append(scaled_seq)
+
+        return sequences_arrays, np.array([np.array(e) for e in eos_probs_log], dtype=np.float32)
 
     def write(
         self,
@@ -230,6 +331,7 @@ class Calligrapher:
         show_grid: bool = False,
         show_endpoints: bool = False,
         line_height: int = 60,
+        greedy: bool = False,
     ) -> None:
         """Generate and save handwritten text as an SVG file.
 
@@ -256,8 +358,17 @@ class Calligrapher:
         if len(stroke_colors) != len(lines) or len(stroke_widths) != len(lines):
             raise ValueError("Number of colors/widths must match number of lines")
 
-        # Generate samples
-        strokes, eos = self.sample(lines, bias=bias, temperature=temperature)
+        # Generate samples with optimized parameters
+        strokes, _ = self.sample(
+            lines,
+            bias=bias,
+            temperature=temperature,
+            greedy=greedy,
+            burn_in_steps=15,
+            eos_threshold_up=0.8,
+            eos_threshold_down=0.2,
+            max_steps=max(100, 20 * max(len(line) for line in lines))
+        )
 
         # Setup SVG canvas
         view_width = 1000
@@ -274,7 +385,10 @@ class Calligrapher:
         # Draw strokes
         initial_y_offset = line_height
         for stroke, color, width in zip(strokes, stroke_colors, stroke_widths, strict=False):
-            self._draw_stroke(dwg, stroke, initial_y_offset, color, width, show_endpoints)
+            # The stroke array now contains (x, y, eos) tuples already
+            if len(stroke) > 0:
+                stroke_data = [(x, y, eos) for x, y, eos in stroke]
+                self._draw_stroke(dwg, stroke_data, initial_y_offset, color, width, show_endpoints)
             initial_y_offset += line_height
 
         dwg.save()
@@ -293,16 +407,17 @@ class Calligrapher:
         width: float,
         show_endpoints: bool,
     ) -> None:
-        """Draw a single stroke in the SVG."""
-        prev_eos = 1.0
+        """Draw a single stroke in the SVG using consistent binary pen state."""
+        prev_up = 1  # Start with pen up
         path_data = f"M 0,{y_offset}"
 
-        for x, y, eos in stroke_data:
-            command = "M" if prev_eos == 1.0 else "L"
+        for x, y, pen_up in stroke_data:
+            # Use the same binary pen state that was fed back to the model
+            command = "M" if prev_up else "L"
             path_data += f" {command} {x},{-y + y_offset}"
-            prev_eos = eos
+            prev_up = int(pen_up)
 
-            if show_endpoints and eos > 0.5:
+            if show_endpoints and pen_up > 0.5:
                 dwg.add(dwg.circle(center=(x, -y + y_offset), r=2, fill="red"))
 
         path = svgwrite.path.Path(path_data)
