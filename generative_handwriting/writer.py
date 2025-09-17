@@ -98,7 +98,7 @@ class Calligrapher:
 
     def adjust_parameters(
         self,
-        pi_logits: np.ndarray,
+        pi: np.ndarray,
         mu1: np.ndarray,
         mu2: np.ndarray,
         sigma1: np.ndarray,
@@ -110,7 +110,7 @@ class Calligrapher:
         """Adjust the MDN parameters for biased sampling.
 
         Args:
-            pi_logits: Mixture weight logits
+            pi: Mixture weights (already softmaxed probabilities)
             mu1, mu2: Means for both dimensions
             sigma1, sigma2: Standard deviations
             rho: Correlation coefficients
@@ -124,8 +124,8 @@ class Calligrapher:
         sigma1_adj = np.exp(np.log(sigma1) - bias) * np.sqrt(temperature)
         sigma2_adj = np.exp(np.log(sigma2) - bias) * np.sqrt(temperature)
 
-        # Adjust mixture weights
-        pi_adj = np.exp(np.log(pi_logits) * (1 + bias) / temperature)
+        # Adjust mixture weights (pi is already probabilities, not logits)
+        pi_adj = np.power(pi, (1 + bias) / temperature)
         pi_adj /= np.sum(pi_adj, axis=-1, keepdims=True)
 
         return pi_adj, mu1, mu2, sigma1_adj, sigma2_adj, rho
@@ -169,14 +169,15 @@ class Calligrapher:
         mdn_outputs = self.model({"input_strokes": x_in, "input_chars": char_seq, "input_char_lens": char_seq_len})
 
         # Split outputs into components
-        pi_logits, mu1, mu2, sigma1, sigma2, rho, eos_logits = tf.split(
+        # NOTE: MDN layer outputs already transformed values (pi is softmaxed, sigma is exp'd, rho is tanh'd)
+        pi, mu1, mu2, sigma1, sigma2, rho, eos_logits = tf.split(
             mdn_outputs, [self.num_output_mixtures] * 6 + [1], axis=-1
         )
 
         # Apply temperature and bias adjustments
         if bias != 0.0 or temperature != 1.0:
             pi, mu1, mu2, sigma1, sigma2, rho = self.adjust_parameters(
-                pi_logits.numpy(),
+                pi.numpy(),  # Already softmaxed
                 mu1.numpy(),
                 mu2.numpy(),
                 sigma1.numpy(),
@@ -186,7 +187,7 @@ class Calligrapher:
                 temperature,
             )
         else:
-            pi = tf.nn.softmax(pi_logits, axis=-1).numpy()
+            pi = pi.numpy()  # Already softmaxed, no need to apply softmax again
 
         # Sample from mixture
         indices = [np.random.choice(self.num_output_mixtures, p=pi[i]) for i in range(pi.shape[0])]

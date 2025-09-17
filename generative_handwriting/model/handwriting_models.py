@@ -232,10 +232,10 @@ class DeepHandwritingSynthesisModel(tf.keras.Model):
 
     def train_step(self, data: Tuple[Dict[str, tf.Tensor], tf.Tensor]) -> Dict[str, tf.Tensor]:
         inputs, y_true = data
-        x_train_len = inputs["input_stroke_lens"]
+        target_stroke_lens = inputs["target_stroke_lens"]
         with tf.GradientTape() as tape:
             y_pred = self(inputs, training=True)
-            nll = mdn_loss(y_true, y_pred, x_train_len, self.num_mixture_components)
+            nll = mdn_loss(y_true, y_pred, target_stroke_lens, self.num_mixture_components)
             # Add layer regularizers (e.g., from MixtureDensityLayer)
             total_loss = nll + tf.add_n(self.losses)
             loss = total_loss

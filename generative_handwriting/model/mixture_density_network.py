@@ -126,14 +126,14 @@ class MixtureDensityLayer(tf.keras.layers.Layer):
         outputs = tf.concat([pi, mu1, mu2, sigma1, sigma2, rho, eos], axis=2)
 
         # Validate shapes match expected dimensions but allow dynamic batch size
-        tf.debugging.assert_rank(pi, 3, message="pi must be rank 3 [batch, time, components]")
-        tf.debugging.assert_rank(mu1, 3, message="mu1 must be rank 3 [batch, time, components]")
-        tf.debugging.assert_rank(mu2, 3, message="mu2 must be rank 3 [batch, time, components]")
-        tf.debugging.assert_rank(sigma1, 3, message="sigma1 must be rank 3 [batch, time, components]")
-        tf.debugging.assert_rank(sigma2, 3, message="sigma2 must be rank 3 [batch, time, components]")
-        tf.debugging.assert_rank(rho, 3, message="rho must be rank 3 [batch, time, components]")
-        tf.debugging.assert_rank(eos, 3, message="eos must be rank 3 [batch, time, 1]")
-        tf.debugging.assert_rank(outputs, 3, message="outputs must be rank 3 [batch, time, features]")
+        # tf.debugging.assert_rank(pi, 3, message="pi must be rank 3 [batch, time, components]")  # Disabled for XLA compatibility
+        # tf.debugging.assert_rank(mu1, 3, message="mu1 must be rank 3 [batch, time, components]")  # Disabled for XLA compatibility
+        # tf.debugging.assert_rank(mu2, 3, message="mu2 must be rank 3 [batch, time, components]")  # Disabled for XLA compatibility
+        # tf.debugging.assert_rank(sigma1, 3, message="sigma1 must be rank 3 [batch, time, components]")  # Disabled for XLA compatibility
+        # tf.debugging.assert_rank(sigma2, 3, message="sigma2 must be rank 3 [batch, time, components]")  # Disabled for XLA compatibility
+        # tf.debugging.assert_rank(rho, 3, message="rho must be rank 3 [batch, time, components]")  # Disabled for XLA compatibility
+        # tf.debugging.assert_rank(eos, 3, message="eos must be rank 3 [batch, time, 1]")  # Disabled for XLA compatibility
+        # tf.debugging.assert_rank(outputs, 3, message="outputs must be rank 3 [batch, time, features]")  # Disabled for XLA compatibility
         return outputs
 
     def get_config(self):

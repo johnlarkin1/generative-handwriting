@@ -33,6 +33,8 @@ rsync -avz -e "ssh -i ~/.ssh/id_rsa_vast -p $port" \
     --exclude='generative_handwriting/saved*' \
     --exclude='generative_handwriting/saved_models*' \
     --exclude='generative_handwriting/handwriting_visualizations*' \
+    --exclude='generative_handwriting/prediction_visualizations*' \
+    --exclude='generative_handwriting/prediction_frames*' \
     --exclude='saved_models*' \
     --exclude='saved*' \
     --exclude='.git' \
