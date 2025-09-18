@@ -12,11 +12,12 @@ class AttentionMechanism(tf.keras.layers.Layer):
     at each time step.
     """
 
-    def __init__(self, num_gaussians, num_chars, name="attention", **kwargs):
+    def __init__(self, num_gaussians, num_chars, name="attention", kappa_scale=1 / 25.0, **kwargs) -> None:
         super(AttentionMechanism, self).__init__(**kwargs)
         self.num_gaussians = num_gaussians
         self.num_chars = num_chars
         self.name_mod = name
+        self.kappa_scale = float(kappa_scale)
 
     def build(self, input_shape):
         self.dense_attention = tf.keras.layers.Dense(
@@ -34,7 +35,7 @@ class AttentionMechanism(tf.keras.layers.Layer):
         # Apply exp activation as in Graves eq. 48-51
         alpha = tf.exp(alpha_hat)
         beta = tf.exp(beta_hat)
-        kappa = prev_kappa + tf.exp(kappa_hat)  # Cumulative kappa with positive increment
+        kappa = prev_kappa + tf.exp(kappa_hat) * self.kappa_scale
 
         # Tiling 'enum' across batch size and number of attention mixture components
         char_len = tf.shape(char_seq_one_hot)[1]

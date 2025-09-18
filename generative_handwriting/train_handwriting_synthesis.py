@@ -4,7 +4,7 @@ import os
 import numpy as np
 import tensorflow as tf
 from alphabet import ALPHABET_SIZE
-from callbacks import ExtendedModelCheckpoint, ModelCheckpointWithPeriod, PrintModelParametersCallback
+from callbacks import ExtendedModelCheckpoint, PrintModelParametersCallback
 from constants import (
     BATCH_SIZE,
     GRADIENT_CLIP_VALUE,
@@ -110,16 +110,23 @@ if __name__ == "__main__":
             learning_rate=learning_rate_schedule,
             global_clipnorm=GRADIENT_CLIP_VALUE,  # Use optimizer's global clipping instead of manual
         ),
-        loss=None,          # Correct when overriding train_step
+        loss=None,  # Correct when overriding train_step
         run_eagerly=False,  # Faster + works better with XLA; set True only when debugging
-        jit_compile=True,   # Enable XLA JIT compilation for better performance
+        jit_compile=True,  # Enable XLA JIT compilation for better performance
     )
 
     callbacks = [
-        # Disabled for XLA compatibility
-        # tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1, profile_batch="500,520"),
-        tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=0),  # Basic logging only for XLA compatibility
-        ModelCheckpointWithPeriod(model_name, period=200),
+        tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=0),  # Basic logging for XLA compatibility
+        # tf.keras.callbacks.ModelCheckpoint(
+        #     filepath=checkpoint_model_filepath,
+        #     monitor='loss',
+        #     save_best_only=True,
+        #     save_weights_only=False,
+        #     mode='min',
+        #     verbose=1
+        # ),
+        tf.keras.callbacks.ReduceLROnPlateau(monitor="loss", factor=0.8, patience=10, verbose=1, min_lr=1e-6),
+        # ModelCheckpointWithPeriod(model_name, period=200),  # Keep at 200 to save disk space
         ExtendedModelCheckpoint(model_name),
         PrintModelParametersCallback(),
     ]

@@ -145,10 +145,12 @@ class Calligrapher:
         bias: float = 0.0,
         temperature: float = 1.0,
         max_steps: Optional[int] = None,
-        eos_threshold_up: float = 0.7,
-        eos_threshold_down: float = 0.3,
+        eos_threshold_up: float = 0.55,
+        eos_threshold_down: float = 0.45,
         burn_in_steps: int = 20,
         greedy: bool = False,
+        step_scale: float = 0.3,
+        use_bernoulli_eos: bool = True,
     ) -> Tuple[List[np.ndarray], np.ndarray]:
         """Sample handwriting sequences for given lines of text using autoregressive generation.
 
@@ -165,6 +167,7 @@ class Calligrapher:
             eos_threshold_down: Threshold for pen down when currently pen up (hysteresis)
             burn_in_steps: Number of initial steps to run without recording
             greedy: Whether to use greedy component selection instead of sampling
+            use_bernoulli_eos: Whether to use Bernoulli sampling for EOS (True) or hysteresis thresholds (False)
 
         Returns:
             Tuple of (sampled_points, end_of_stroke_probs)
@@ -199,7 +202,8 @@ class Calligrapher:
             state_list.extend([init[f"lstm_{i}_h"], init[f"lstm_{i}_c"]])
         state_list.extend([init["kappa"], init["w"]])
 
-        x_prev = tf.constant(np.tile([[0.0, 0.0, 0.0]], (B, 1)), dtype=tf.float32)  # (dx, dy, pen_up=0 to start writing)
+        # (dx, dy, pen_up=0 to start writing)
+        x_prev = tf.constant(np.tile([[0.0, 0.0, 0.0]], (B, 1)), dtype=tf.float32)
 
         K = self.num_output_mixtures
         sequences: List[List[Tuple[float, float, float]]] = [[] for _ in range(B)]
@@ -210,15 +214,17 @@ class Calligrapher:
 
         for t in range(max_steps + burn_in_steps):
             # One recurrent step through the cell
-            h_t, state_list = cell(x_prev, state_list)             # h_t: [B, units]
-            mdn_t = self.model.mdn_layer(h_t[:, None, :])[:, 0, :] # [B, 6K+1]
+            h_t, state_list = cell(x_prev, state_list)  # h_t: [B, units]
+            mdn_t = self.model.mdn_layer(h_t[:, None, :])[:, 0, :]  # [B, 6K+1]
 
             # Split parameters
             pi, mu1, mu2, s1, s2, rho, eos_logit = tf.split(mdn_t, [K, K, K, K, K, K, 1], axis=-1)
-            pi, mu1, mu2, s1, s2, rho = [
-                a.numpy() for a in (pi, mu1, mu2, s1, s2, rho)
-            ]
-            eos_prob = 1.0 / (1.0 + np.exp(-eos_logit.numpy().reshape(-1) / max(1e-6, temperature)))
+            pi, mu1, mu2, s1, s2, rho = [a.numpy() for a in (pi, mu1, mu2, s1, s2, rho)]
+            eos_logit_np = eos_logit.numpy().reshape(-1)
+            # Temperature scaling on logits; clip to avoid extreme values
+            temp = max(1e-6, temperature)
+            eos_logit_np = np.clip(eos_logit_np / temp, -10.0, 10.0)
+            eos_prob = 1.0 / (1.0 + np.exp(-eos_logit_np))
 
             # Temperature/bias adjustment (pi already prob., sigmas positive)
             pi, mu1, mu2, s1, s2, rho = self.adjust_parameters(
@@ -239,26 +245,28 @@ class Calligrapher:
 
                 # For very stable generation, optionally use means directly
                 if bias > 0.7:  # High bias = use means directly for stability
-                    dx = mu1[b, k] * 0.1  # Scale down means significantly
-                    dy = mu2[b, k] * 0.1
+                    dx = mu1[b, k] * step_scale
+                    dy = mu2[b, k] * step_scale
                 else:
-                    dx, dy = self.sample_gaussian_2d(
-                        mu1[b, k], mu2[b, k], s1[b, k], s2[b, k], rho[b, k]
-                    )
+                    dx, dy = self.sample_gaussian_2d(mu1[b, k], mu2[b, k], s1[b, k], s2[b, k], rho[b, k])
                     # Scale down the sampled values
-                    dx *= 0.1
-                    dy *= 0.1
+                    dx *= step_scale
+                    dy *= step_scale
 
                 # Additional clamping for safety
                 max_delta = 1.0  # Much smaller maximum movement
                 dx = np.clip(dx, -max_delta, max_delta)
                 dy = np.clip(dy, -max_delta, max_delta)
 
-                # Hysteresis thresholding for pen state
-                if prev_up_bin[b]:
-                    pen_up_bin = float(eos_prob[b] > eos_threshold_down)
+                # EOS sampling: Bernoulli vs hysteresis thresholds
+                if use_bernoulli_eos:
+                    pen_up_bin = float(np.random.rand() < eos_prob[b])
                 else:
-                    pen_up_bin = float(eos_prob[b] > eos_threshold_up)
+                    # Hysteresis (kept as an option)
+                    if prev_up_bin[b]:
+                        pen_up_bin = float(eos_prob[b] > eos_threshold_down)
+                    else:
+                        pen_up_bin = float(eos_prob[b] > eos_threshold_up)
                 prev_up_bin[b] = int(pen_up_bin)
 
                 # Only record points after burn-in period
@@ -304,7 +312,7 @@ class Calligrapher:
 
                 # Scale more conservatively
                 x_range = coords[:, 0].max() - coords[:, 0].min()
-                y_range = coords[:, 1].max() - coords[:, 1].min()
+                # y_range = coords[:, 1].max() - coords[:, 1].min()
 
                 if x_range > 0:
                     # Scale to fit width, but not too aggressively
@@ -332,6 +340,12 @@ class Calligrapher:
         show_endpoints: bool = False,
         line_height: int = 60,
         greedy: bool = False,
+        burn_in_steps: int = 15,
+        eos_threshold_up: float = 0.55,
+        eos_threshold_down: float = 0.45,
+        max_steps: Optional[int] = None,
+        step_scale: float = 0.3,
+        use_bernoulli_eos: bool = True,
     ) -> None:
         """Generate and save handwritten text as an SVG file.
 
@@ -364,10 +378,12 @@ class Calligrapher:
             bias=bias,
             temperature=temperature,
             greedy=greedy,
-            burn_in_steps=15,
-            eos_threshold_up=0.8,
-            eos_threshold_down=0.2,
-            max_steps=max(100, 20 * max(len(line) for line in lines))
+            burn_in_steps=burn_in_steps,
+            eos_threshold_up=eos_threshold_up,
+            eos_threshold_down=eos_threshold_down,
+            max_steps=max_steps or max(100, 20 * max(len(line) for line in lines)),
+            step_scale=step_scale,
+            use_bernoulli_eos=use_bernoulli_eos,
         )
 
         # Setup SVG canvas

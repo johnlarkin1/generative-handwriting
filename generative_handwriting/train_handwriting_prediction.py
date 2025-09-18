@@ -69,24 +69,25 @@ if __name__ == "__main__":
     x_train_len = combined_train_lengths
     y_train = np.zeros_like(x_train)
     y_train[:, :-1, :] = x_train[:, 1:, :]
-    y_train_len = np.zeros_like(x_train_len)
-    y_train_len = x_train_len[1:]
+    # Graves: labels are x_{t+1}, so there are (len-1) valid targets per sequence.
+    y_train_len = np.maximum(x_train_len - 1, 1)
 
     best_loss = float("inf")
 
     batch_size = BATCH_SIZE
-    dataset = tf.data.Dataset.from_tensor_slices((x_train, y_train, x_train_len))
+    dataset = tf.data.Dataset.from_tensor_slices((x_train, y_train, y_train_len))
     # Optimize dataset pipeline for GPU
-    dataset = (dataset
-               .batch(batch_size)
-               .prefetch(tf.data.AUTOTUNE)  # Prefetch data to overlap computation
-               .cache())  # Cache dataset in memory for faster access
+    dataset = (
+        dataset.batch(batch_size)
+        .prefetch(tf.data.AUTOTUNE)  # Prefetch data to overlap computation
+        .cache()
+    )  # Cache dataset in memory for faster access
 
     # Use Keras 3 compatible optimizer with mixed precision
     optimizer = tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE)
 
     # Configure GPU memory growth to avoid OOM
-    gpus = tf.config.experimental.list_physical_devices('GPU')
+    gpus = tf.config.experimental.list_physical_devices("GPU")
     if gpus:
         try:
             for gpu in gpus:

@@ -6,7 +6,8 @@
       "Bash(uv sync:*)",
       "Bash(ruff check:*)",
       "Bash(ruff:*)",
-      "Bash(python -m py_compile:*)"
+      "Bash(python -m py_compile:*)",
+      "Bash(poetry run:*)"
     ],
     "deny": []
   }

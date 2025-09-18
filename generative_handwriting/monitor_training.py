@@ -90,17 +90,66 @@ def quick_test_model(model_path: str, data_loader: HandwritingDataLoader):
 
 
 def plot_training_progress(model_dir: str):
-    """Create a simple plot showing training progress if logs exist."""
-    # This would need to be extended based on your logging setup
-    # For now, just create a placeholder
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.text(0.5, 0.5, 'Training Progress Monitor\n(Logs will appear here)',
-            ha='center', va='center', transform=ax.transAxes, fontsize=14)
-    ax.set_title('Model Training Status')
-    ax.axis('off')
+    """Create a plot showing training progress from TensorBoard logs."""
+    import glob
+
+    # Look for TensorBoard event files
+    log_pattern = os.path.join(model_dir, "../logs/handwriting_synthesis/profile/*/events.out.tfevents.*")
+    log_files = glob.glob(log_pattern)
+
+    fig, ax = plt.subplots(figsize=(12, 8))
+
+    if log_files:
+        try:
+            # Try to read TensorBoard logs for loss values
+            from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+
+            # Get the most recent log file
+            latest_log = max(log_files, key=os.path.getctime)
+            ea = EventAccumulator(latest_log)
+            ea.Reload()
+
+            # Get available scalar summaries
+            scalar_keys = ea.Tags()['scalars']
+
+            if 'epoch_loss' in scalar_keys or 'loss' in scalar_keys:
+                loss_key = 'epoch_loss' if 'epoch_loss' in scalar_keys else 'loss'
+                loss_events = ea.Scalars(loss_key)
+                steps = [event.step for event in loss_events]
+                losses = [event.value for event in loss_events]
+
+                ax.plot(steps, losses, 'b-', linewidth=2, label='Training Loss')
+                ax.set_xlabel('Step')
+                ax.set_ylabel('Loss')
+                ax.set_title('Synthesis Model Training Progress')
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+
+                # Add recent loss info
+                if losses:
+                    recent_loss = losses[-1]
+                    ax.text(0.02, 0.98, f'Latest Loss: {recent_loss:.4f}',
+                           transform=ax.transAxes, va='top',
+                           bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
+            else:
+                ax.text(0.5, 0.5, f'TensorBoard logs found but no loss data\nAvailable keys: {scalar_keys}',
+                       ha='center', va='center', transform=ax.transAxes, fontsize=12)
+                ax.set_title('Synthesis Model Training Monitor')
+                ax.axis('off')
+
+        except Exception as e:
+            ax.text(0.5, 0.5, f'Error reading TensorBoard logs:\n{str(e)}',
+                   ha='center', va='center', transform=ax.transAxes, fontsize=12)
+            ax.set_title('Synthesis Model Training Monitor')
+            ax.axis('off')
+    else:
+        ax.text(0.5, 0.5, 'No TensorBoard logs found yet\nTraining may not have started',
+               ha='center', va='center', transform=ax.transAxes, fontsize=14)
+        ax.set_title('Synthesis Model Training Monitor')
+        ax.axis('off')
 
     plot_path = os.path.join(model_dir, 'training_progress.png')
-    plt.savefig(plot_path)
+    plt.savefig(plot_path, dpi=100, bbox_inches='tight')
     plt.close()
     return plot_path
 
@@ -108,11 +157,27 @@ def plot_training_progress(model_dir: str):
 def main():
     """Monitor training progress and model status."""
     curr_directory = os.path.dirname(os.path.realpath(__file__))
-    model_dir = f"{curr_directory}/saved_models/full_handwriting_prediction/"
+
+    # Check for synthesis model first (primary focus)
+    synthesis_dir = f"{curr_directory}/saved/models/handwriting_synthesis/"
+    prediction_dir = f"{curr_directory}/saved_models/full_handwriting_prediction/"
+
+    # Determine which model to monitor
+    if os.path.exists(synthesis_dir) and any(os.listdir(synthesis_dir)):
+        model_dir = synthesis_dir
+        model_type = "SYNTHESIS"
+    elif os.path.exists(prediction_dir):
+        model_dir = prediction_dir
+        model_type = "PREDICTION"
+    else:
+        model_dir = synthesis_dir  # Default for new training
+        model_type = "SYNTHESIS"
 
     print("=" * 60)
-    print("HANDWRITING MODEL TRAINING MONITOR")
+    print(f"HANDWRITING {model_type} MODEL TRAINING MONITOR")
     print("=" * 60)
+    print(f"📁 Monitoring: {model_dir}")
+    print("-" * 60)
 
     # Get model info
     info = get_model_info(model_dir)
