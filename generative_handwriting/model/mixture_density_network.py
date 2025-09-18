@@ -4,7 +4,9 @@ from constants import NUM_MIXTURE_COMPONENTS_PER_COMPONENT
 
 
 class MixtureDensityLayer(tf.keras.layers.Layer):
-    def __init__(self, num_components, name="mdn", temperature=1.0, **kwargs):
+    def __init__(self, num_components, name="mdn", temperature=1.0,
+                 enable_regularization=True, sigma_reg_weight=0.01,
+                 rho_reg_weight=0.01, entropy_reg_weight=0.1, **kwargs):
         super(MixtureDensityLayer, self).__init__(name=name, **kwargs)
         self.num_components = num_components
         # The number of parameters per mixture component: 2 means, 2 standard deviations, 1 correlation
@@ -12,6 +14,10 @@ class MixtureDensityLayer(tf.keras.layers.Layer):
         self.output_dim = num_components * NUM_MIXTURE_COMPONENTS_PER_COMPONENT + 1
         self.mod_name = name
         self.temperature = temperature
+        self.enable_regularization = enable_regularization
+        self.sigma_reg_weight = sigma_reg_weight
+        self.rho_reg_weight = rho_reg_weight
+        self.entropy_reg_weight = entropy_reg_weight
 
     def build(self, input_shape):
         # Weights for mixture weights
@@ -41,14 +47,14 @@ class MixtureDensityLayer(tf.keras.layers.Layer):
         self.W_rho = self.add_weight(
             name=f"{self.mod_name}_W_rho",
             shape=(input_shape[-1], self.num_components),
-            initializer="uniform",
+            initializer=tf.keras.initializers.RandomNormal(stddev=0.01),
             trainable=True,
         )
         # Weights for end-of-stroke probability
         self.W_eos = self.add_weight(
             name=f"{self.mod_name}_W_eos",
             shape=(input_shape[-1], 1),
-            initializer="uniform",
+            initializer=tf.keras.initializers.RandomNormal(stddev=0.01),
             trainable=True,
         )
         # Bias for mixture weights
@@ -80,21 +86,26 @@ class MixtureDensityLayer(tf.keras.layers.Layer):
             trainable=True,
         )
         # Bias for end-of-stroke probability
-        self.b_eos = self.add_weight(name=f"{self.mod_name}_b_eos", shape=(1,), initializer="zeros", trainable=True)
+        self.b_eos = self.add_weight(name=f"{self.mod_name}_b_eos", shape=(1,), initializer=tf.keras.initializers.Constant(-2.0), trainable=True)
         super().build(input_shape)
 
     def _compute_regularization(self, pi, sigma, rho):
-        """Add regularization to prevent degenerate solutions."""
-        # L2 regularization on sigmas to prevent them from getting too large
-        sigma_reg = 0.01 * tf.reduce_mean(tf.square(tf.math.log(sigma)))
+        """Add configurable regularization to prevent degenerate solutions.
+        Note: These regularization terms were not in Graves (2013) original paper.
+        """
+        if not self.enable_regularization:
+            return tf.constant(0.0)
 
-        # Regularization to encourage diverse mixture components
+        # L2 regularization on sigmas to prevent them from getting too large
+        sigma_reg = self.sigma_reg_weight * tf.reduce_mean(tf.square(tf.math.log(sigma)))
+
+        # Regularization to encourage diverse mixture components (can hurt model confidence)
         pi_entropy = -tf.reduce_mean(tf.reduce_sum(pi * tf.math.log(pi + 1e-6), axis=-1))
 
         # Correlation regularization to prevent components from becoming too correlated
-        rho_reg = 0.01 * tf.reduce_mean(tf.square(rho))
+        rho_reg = self.rho_reg_weight * tf.reduce_mean(tf.square(rho))
 
-        return sigma_reg - 0.1 * pi_entropy + rho_reg
+        return sigma_reg - self.entropy_reg_weight * pi_entropy + rho_reg
 
     def call(self, inputs, training=None):
         sigma_eps = 1e-2  # Increased from 1e-3 for better stability
@@ -142,6 +153,11 @@ class MixtureDensityLayer(tf.keras.layers.Layer):
             {
                 "num_components": self.num_components,
                 "name": self.mod_name,
+                "temperature": self.temperature,
+                "enable_regularization": self.enable_regularization,
+                "sigma_reg_weight": self.sigma_reg_weight,
+                "rho_reg_weight": self.rho_reg_weight,
+                "entropy_reg_weight": self.entropy_reg_weight,
             }
         )
         return config

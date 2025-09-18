@@ -182,6 +182,8 @@ class DeepHandwritingSynthesisModel(tf.keras.Model):
         num_chars=ALPHABET_SIZE,
         num_attention_gaussians=NUM_ATTENTION_GAUSSIAN_COMPONENTS,
         gradient_clip_value=GRADIENT_CLIP_VALUE,
+        enable_mdn_regularization=True,
+        attention_kappa_scale=1/25.0,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -191,11 +193,13 @@ class DeepHandwritingSynthesisModel(tf.keras.Model):
         self.num_chars = num_chars
         self.num_attention_gaussians = num_attention_gaussians
         self.gradient_clip_value = gradient_clip_value
+        self.enable_mdn_regularization = enable_mdn_regularization
+        self.attention_kappa_scale = attention_kappa_scale
         self.lstm_cells = [LSTMPeepholeCell(units, idx) for idx in range(num_layers)]
-        self.attention_mechanism = AttentionMechanism(num_gaussians=num_attention_gaussians, num_chars=num_chars)
+        self.attention_mechanism = AttentionMechanism(num_gaussians=num_attention_gaussians, num_chars=num_chars, kappa_scale=attention_kappa_scale)
         self.attention_rnn_cell = AttentionRNNCell(self.lstm_cells, self.attention_mechanism, self.num_chars)
         self.rnn_layer = tf.keras.layers.RNN(self.attention_rnn_cell, return_sequences=True)
-        self.mdn_layer = MixtureDensityLayer(num_mixture_components)
+        self.mdn_layer = MixtureDensityLayer(num_mixture_components, enable_regularization=enable_mdn_regularization)
 
         # Metric trackers for proper loss aggregation
         self.loss_tracker = tf.keras.metrics.Mean(name="loss")
@@ -286,6 +290,8 @@ class DeepHandwritingSynthesisModel(tf.keras.Model):
                 "num_mixture_components": self.num_mixture_components,
                 "num_chars": self.num_chars,
                 "num_attention_gaussians": self.num_attention_gaussians,
+                "enable_mdn_regularization": self.enable_mdn_regularization,
+                "attention_kappa_scale": self.attention_kappa_scale,
             }
         )
         return config

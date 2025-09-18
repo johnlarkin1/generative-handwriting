@@ -20,8 +20,8 @@ tf.keras.mixed_precision.set_global_policy("float32")
 
 # Path logic for saved files
 curr_directory = os.path.dirname(os.path.realpath(__file__))
-model_name = "handwriting_synthesis"
-model_save_dir = f"{curr_directory}/saved/models/{model_name}/"
+model_name = "full_handwriting_synthesis"
+model_save_dir = f"{curr_directory}/saved_models/{model_name}/"
 start_day = datetime.datetime.now().strftime("%Y%m%d")
 log_dir = f"{curr_directory}/saved/logs/{model_name}/profile/{start_day}"
 debugging_dir = f"{curr_directory}/saved/logs/{model_name}/debug/{start_day}"

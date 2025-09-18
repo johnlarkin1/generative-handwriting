@@ -1,3 +1,4 @@
+import json
 import os
 from typing import List, Optional, Tuple
 
@@ -35,6 +36,7 @@ class Calligrapher:
         sigma_min: float = 2e-3,
         sigma_max: float = 3.0,
         rho_max: float = 0.95,
+        norm_stats_path: Optional[str] = None,
     ) -> None:
         """Initialize the Calligrapher.
 
@@ -44,6 +46,7 @@ class Calligrapher:
             sigma_min: Minimum standard deviation for numerical stability
             sigma_max: Maximum standard deviation
             rho_max: Maximum absolute correlation coefficient
+            norm_stats_path: Optional path to normalization statistics JSON file
 
         Raises:
             ValueError: If the model cannot be loaded from the given path
@@ -53,6 +56,21 @@ class Calligrapher:
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
         self.rho_max = rho_max
+
+        # Load normalization statistics if provided
+        self.norm_mu = np.array([0.0, 0.0])  # Default: no normalization
+        self.norm_sigma = np.array([1.0, 1.0])  # Default: no scaling
+
+        if norm_stats_path and os.path.exists(norm_stats_path):
+            try:
+                with open(norm_stats_path, "r") as f:
+                    stats = json.load(f)
+                    self.norm_mu = np.array(stats["norm_mu"], dtype=np.float32)
+                    self.norm_sigma = np.array(stats["norm_sigma"], dtype=np.float32)
+                    print(f"Loaded normalization stats: μ={self.norm_mu}, σ={self.norm_sigma}")
+            except Exception as e:
+                print(f"Warning: Could not load norm stats from {norm_stats_path}: {e}")
+                print("Using default normalization (no scaling)")
 
         # Load the model with custom objects
         self.model, self.loaded = load_model_if_exists(
@@ -145,12 +163,13 @@ class Calligrapher:
         bias: float = 0.0,
         temperature: float = 1.0,
         max_steps: Optional[int] = None,
-        eos_threshold_up: float = 0.55,
-        eos_threshold_down: float = 0.45,
-        burn_in_steps: int = 20,
+        eos_threshold_up: float = 0.5,
+        eos_threshold_down: float = 0.5,
+        burn_in_steps: int = 40,
         greedy: bool = False,
-        step_scale: float = 0.3,
+        step_scale: float = 1.0,
         use_bernoulli_eos: bool = True,
+        use_stop_condition: bool = True,
     ) -> Tuple[List[np.ndarray], np.ndarray]:
         """Sample handwriting sequences for given lines of text using autoregressive generation.
 
@@ -168,6 +187,7 @@ class Calligrapher:
             burn_in_steps: Number of initial steps to run without recording
             greedy: Whether to use greedy component selection instead of sampling
             use_bernoulli_eos: Whether to use Bernoulli sampling for EOS (True) or hysteresis thresholds (False)
+            use_stop_condition: Whether to use early stopping based on attention (False for debugging)
 
         Returns:
             Tuple of (sampled_points, end_of_stroke_probs)
@@ -245,18 +265,29 @@ class Calligrapher:
 
                 # For very stable generation, optionally use means directly
                 if bias > 0.7:  # High bias = use means directly for stability
-                    dx = mu1[b, k] * step_scale
-                    dy = mu2[b, k] * step_scale
+                    dx = mu1[b, k]
+                    dy = mu2[b, k]
                 else:
                     dx, dy = self.sample_gaussian_2d(mu1[b, k], mu2[b, k], s1[b, k], s2[b, k], rho[b, k])
-                    # Scale down the sampled values
-                    dx *= step_scale
-                    dy *= step_scale
 
-                # Additional clamping for safety
-                max_delta = 1.0  # Much smaller maximum movement
-                dx = np.clip(dx, -max_delta, max_delta)
-                dy = np.clip(dy, -max_delta, max_delta)
+                # Keep normalized values for debugging if needed
+                dx_norm = dx
+                dy_norm = dy
+
+                # CRITICAL FIX: Denormalize the deltas with dataset statistics
+                # The model outputs are in normalized space, we need to convert back to pixel space
+                dx_denorm = dx * self.norm_sigma[0] + self.norm_mu[0]
+                dy_denorm = dy * self.norm_sigma[1] + self.norm_mu[1]
+
+                # Apply step_scale after denormalization if needed
+                if step_scale != 1.0:
+                    dx_denorm *= step_scale
+                    dy_denorm *= step_scale
+
+                # Safety clamping with reasonable bounds in pixel space
+                max_delta = 50.0  # Pixel space bounds
+                dx_denorm = np.clip(dx_denorm, -max_delta, max_delta)
+                dy_denorm = np.clip(dy_denorm, -max_delta, max_delta)
 
                 # EOS sampling: Bernoulli vs hysteresis thresholds
                 if use_bernoulli_eos:
@@ -271,22 +302,23 @@ class Calligrapher:
 
                 # Only record points after burn-in period
                 if t >= burn_in_steps:
-                    # Accumulate deltas -> absolute coordinates for drawing
+                    # Accumulate denormalized deltas -> absolute coordinates for drawing
                     if len(sequences[b]) == 0:
-                        abs_x, abs_y = dx, dy
+                        abs_x, abs_y = dx_denorm, dy_denorm
                     else:
                         prev_x, prev_y, _ = sequences[b][-1]
-                        abs_x, abs_y = prev_x + dx, prev_y + dy
+                        abs_x, abs_y = prev_x + dx_denorm, prev_y + dy_denorm
 
                     sequences[b].append((abs_x, abs_y, pen_up_bin))
                     eos_probs_log[b].append(eos_prob[b])
 
-                x_prev_np[b] = (dx, dy, pen_up_bin)
+                # Feed back the NORMALIZED values to the model (not denormalized)
+                x_prev_np[b] = (dx_norm, dy_norm, pen_up_bin)
 
             x_prev = tf.convert_to_tensor(x_prev_np, dtype=tf.float32)
 
             # Stop condition: attention has passed the end of text and pen is mostly up
-            if t >= burn_in_steps + 20:  # Give some time after burn-in
+            if use_stop_condition and t >= burn_in_steps + 20:  # Give some time after burn-in
                 kappa = state_list[-2].numpy()  # Attention position
                 attention_done = (kappa.mean(axis=1) > (char_len + 1.5)).all()
                 pen_mostly_up = np.mean(eos_prob) > 0.6
@@ -294,37 +326,32 @@ class Calligrapher:
                 if attention_done and pen_mostly_up:
                     break
 
-        # Convert to arrays and apply scaling for SVG display
+        # Convert to arrays - preserve denormalized coordinates (no scaling distortion)
         sequences_arrays = []
+
         for seq in sequences:
             if len(seq) == 0:
                 sequences_arrays.append([])
                 continue
 
-            # Extract coordinates and pen states
+            # Extract coordinates and pen states - coordinates are already denormalized to pixel space
             coords = np.array([(x, y) for x, y, _ in seq])
             pen_states = [pen_up for _, _, pen_up in seq]
 
-            # Only scale if coordinates are reasonable
+            # Only apply minimal offset for visibility (no scaling that destroys proportions)
             if len(coords) > 0:
-                # Shift to origin
-                coords -= coords.min(axis=0)
+                # Optional: shift to origin if you want relative positioning
+                min_x, min_y = coords.min(axis=0)
+                coords[:, 0] -= min_x
+                coords[:, 1] -= min_y
 
-                # Scale more conservatively
-                x_range = coords[:, 0].max() - coords[:, 0].min()
-                # y_range = coords[:, 1].max() - coords[:, 1].min()
+                # Add small offset from edges for visibility only
+                coords[:, 0] += 10  # Small left margin
+                coords[:, 1] += 10  # Small top margin
 
-                if x_range > 0:
-                    # Scale to fit width, but not too aggressively
-                    scale = min(50.0, 800.0 / x_range)  # Cap scaling factor
-                    coords *= scale
-
-                # Center vertically
-                coords[:, 1] += 30  # Offset from top
-
-            # Reconstruct with scaled coordinates and preserved pen states
-            scaled_seq = [(float(coords[j][0]), float(coords[j][1]), pen_states[j]) for j in range(len(coords))]
-            sequences_arrays.append(scaled_seq)
+            # Reconstruct with preserved coordinates and pen states
+            final_seq = [(float(coords[j][0]), float(coords[j][1]), pen_states[j]) for j in range(len(coords))]
+            sequences_arrays.append(final_seq)
 
         return sequences_arrays, np.array([np.array(e) for e in eos_probs_log], dtype=np.float32)
 
@@ -340,11 +367,11 @@ class Calligrapher:
         show_endpoints: bool = False,
         line_height: int = 60,
         greedy: bool = False,
-        burn_in_steps: int = 15,
-        eos_threshold_up: float = 0.55,
-        eos_threshold_down: float = 0.45,
+        burn_in_steps: int = 40,
+        eos_threshold_up: float = 0.5,
+        eos_threshold_down: float = 0.5,
         max_steps: Optional[int] = None,
-        step_scale: float = 0.3,
+        step_scale: float = 1.0,
         use_bernoulli_eos: bool = True,
     ) -> None:
         """Generate and save handwritten text as an SVG file.
@@ -443,7 +470,7 @@ class Calligrapher:
 
 if __name__ == "__main__":
     curr_directory = os.path.dirname(os.path.realpath(__file__))
-    model_save_dir = f"{curr_directory}/saved_models/handwriting_synthesis_single_batch_subset/"
+    model_save_dir = f"{curr_directory}/saved_models/full_handwriting_synthesis/"
     model_load_path = os.path.join(model_save_dir, "best_model.keras")
 
     # Example usage

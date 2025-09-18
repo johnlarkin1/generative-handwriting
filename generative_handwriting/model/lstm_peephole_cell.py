@@ -89,41 +89,36 @@ class LSTMPeepholeCell(tf.keras.layers.Layer):
         """
         # Both of these are going to be shape (?, num_lstm_units)
         h_tm1, c_tm1 = state
-        # Compute linear combinations for input, forget, and output gates, and cell candidate
-        # Basically the meat of eq, 7, 8, 9, 10
+        # basically the meat of eq, 7, 8, 9, 10
         z = tf.matmul(inputs, self.kernel) + tf.matmul(h_tm1, self.recurrent_kernel) + self.bias
-        # Split the transformations into input, forget, cell, and output components
-        i, f, c_candidate, o = tf.split(z, num_or_size_splits=4, axis=1)
+        i_lin, f_lin, g_lin, o_lin = tf.split(z, num_or_size_splits=4, axis=1)
 
         if self.should_apply_peephole:
-            # Peephole connections before the activation functions
-            peephole_i = tf.expand_dims(self.peephole_weights[:, 0], axis=0)
-            peephole_f = tf.expand_dims(self.peephole_weights[:, 1], axis=0)
-            i += c_tm1 * peephole_i
-            f += c_tm1 * peephole_f
+            # this was a bug I had!! we want peephole before activation
+            pw_i = tf.expand_dims(self.peephole_weights[:, 0], axis=0)
+            pw_f = tf.expand_dims(self.peephole_weights[:, 1], axis=0)
+            i_lin = i_lin + c_tm1 * pw_i
+            f_lin = f_lin + c_tm1 * pw_f
 
-        # apply the activations - first step for eq. 7, eq. 8. eq. 10
-        i = tf.sigmoid(i)
-        f = tf.sigmoid(f)
-        o = tf.sigmoid(o)
-
+        # if we clip, we should do this before activation
         if self.should_clip_gradients:
-            # Per Graves, we need to apply gradient clipping to still fight off
-            # the exploding derivative issue. It's a bit weird
-            # to do it here maybe so that's why this bool defaults to off.
-            i = tf.clip_by_value(i, -self.clip_value, self.clip_value)
-            f = tf.clip_by_value(f, -self.clip_value, self.clip_value)
-            o = tf.clip_by_value(o, -self.clip_value, self.clip_value)
-            c_candidate = tf.clip_by_value(c_candidate, -self.clip_value, self.clip_value)
+            i_lin = tf.clip_by_value(i_lin, -self.clip_value, self.clip_value)
+            f_lin = tf.clip_by_value(f_lin, -self.clip_value, self.clip_value)
+            g_lin = tf.clip_by_value(g_lin, -self.clip_value, self.clip_value)
+            o_lin = tf.clip_by_value(o_lin, -self.clip_value, self.clip_value)
 
-        c_candidate = tf.tanh(c_candidate)
-        c = f * c_tm1 + i * c_candidate
+        # apply activation functions! throwback to biomedical signals
+        i = tf.sigmoid(i_lin)
+        f = tf.sigmoid(f_lin)
+        g = tf.tanh(g_lin)
+        c = f * c_tm1 + i * g
+
         if self.should_apply_peephole:
-            # Adjusting the output gate with peephole connection after computing new cell state
-            peephole_o = tf.expand_dims(self.peephole_weights[:, 2], axis=0)
-            o += c * peephole_o
+            pw_o = tf.expand_dims(self.peephole_weights[:, 2], axis=0)
+            o_lin = o_lin + c * pw_o
 
-        # Compute final hidden state -> Equation 11
+        o = tf.sigmoid(o_lin)
+        # final hidden state -> eq. 11
         h = o * tf.tanh(c)
         return h, [h, c]
 
