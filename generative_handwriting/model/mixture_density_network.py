@@ -4,9 +4,17 @@ from constants import NUM_MIXTURE_COMPONENTS_PER_COMPONENT
 
 
 class MixtureDensityLayer(tf.keras.layers.Layer):
-    def __init__(self, num_components, name="mdn", temperature=1.0,
-                 enable_regularization=True, sigma_reg_weight=0.01,
-                 rho_reg_weight=0.01, entropy_reg_weight=0.1, **kwargs):
+    def __init__(
+        self,
+        num_components,
+        name="mdn",
+        temperature=1.0,
+        enable_regularization=True,
+        sigma_reg_weight=0.01,
+        rho_reg_weight=0.01,
+        entropy_reg_weight=0.1,
+        **kwargs,
+    ):
         super(MixtureDensityLayer, self).__init__(name=name, **kwargs)
         self.num_components = num_components
         # The number of parameters per mixture component: 2 means, 2 standard deviations, 1 correlation
@@ -20,41 +28,42 @@ class MixtureDensityLayer(tf.keras.layers.Layer):
         self.entropy_reg_weight = entropy_reg_weight
 
     def build(self, input_shape):
-        # Weights for mixture weights
+        graves_initializer = tf.keras.initializers.TruncatedNormal(mean=0.0, stddev=0.075)
+
         # These will be determined dynamically in call()
         self.input_units = input_shape[-1]
         self.W_pi = self.add_weight(
             name=f"{self.mod_name}_W_pi",
             shape=(input_shape[-1], self.num_components),
-            initializer=tf.keras.initializers.GlorotNormal(),
+            initializer=graves_initializer,
             trainable=True,
         )
         # Weights for means
         self.W_mu = self.add_weight(
             name=f"{self.mod_name}_W_mu",
             shape=(input_shape[-1], self.num_components * 2),
-            initializer=tf.keras.initializers.RandomNormal(mean=0.0, stddev=0.01),
+            initializer=graves_initializer,
             trainable=True,
         )
         # Weights for standard deviations
         self.W_sigma = self.add_weight(
             name=f"{self.mod_name}_W_sigma",
             shape=(input_shape[-1], self.num_components * 2),
-            initializer=tf.keras.initializers.RandomNormal(mean=0.0, stddev=0.01),
+            initializer=graves_initializer,
             trainable=True,
         )
         # Weights for correlation coefficients
         self.W_rho = self.add_weight(
             name=f"{self.mod_name}_W_rho",
             shape=(input_shape[-1], self.num_components),
-            initializer=tf.keras.initializers.RandomNormal(stddev=0.01),
+            initializer=graves_initializer,
             trainable=True,
         )
         # Weights for end-of-stroke probability
         self.W_eos = self.add_weight(
             name=f"{self.mod_name}_W_eos",
             shape=(input_shape[-1], 1),
-            initializer=tf.keras.initializers.RandomNormal(stddev=0.01),
+            initializer=graves_initializer,
             trainable=True,
         )
         # Bias for mixture weights
@@ -86,7 +95,9 @@ class MixtureDensityLayer(tf.keras.layers.Layer):
             trainable=True,
         )
         # Bias for end-of-stroke probability
-        self.b_eos = self.add_weight(name=f"{self.mod_name}_b_eos", shape=(1,), initializer=tf.keras.initializers.Constant(-2.0), trainable=True)
+        self.b_eos = self.add_weight(
+            name=f"{self.mod_name}_b_eos", shape=(1,), initializer=tf.keras.initializers.Constant(-2.0), trainable=True
+        )
         super().build(input_shape)
 
     def _compute_regularization(self, pi, sigma, rho):
@@ -233,9 +244,9 @@ def mdn_loss(y_true, y_pred, stroke_lengths, num_components, eps=1e-6):
 
     # Use stable log-sum-exp
     max_weighted = tf.reduce_max(weighted_log_probs, axis=2, keepdims=True)
-    log_mixture = max_weighted + tf.math.log(tf.reduce_sum(
-        tf.exp(weighted_log_probs - max_weighted), axis=2, keepdims=True
-    ))
+    log_mixture = max_weighted + tf.math.log(
+        tf.reduce_sum(tf.exp(weighted_log_probs - max_weighted), axis=2, keepdims=True)
+    )
     log_mixture = tf.squeeze(log_mixture, axis=2)
 
     # Calculate bernoulli log likelihood for end-of-stroke using logits
@@ -250,7 +261,7 @@ def mdn_loss(y_true, y_pred, stroke_lengths, num_components, eps=1e-6):
     total_log_likelihood = tf.where(
         tf.logical_or(tf.math.is_nan(total_log_likelihood), tf.math.is_inf(total_log_likelihood)),
         tf.constant(-50.0, dtype=total_log_likelihood.dtype),
-        total_log_likelihood
+        total_log_likelihood,
     )
 
     nll = -total_log_likelihood

@@ -45,26 +45,31 @@ class LSTMPeepholeCell(tf.keras.layers.Layer):
         Building the LSTM cell with peephole connections.
         Basically defining all of the appropriate weights, biases, and peephole weights.
         """
+        graves_initializer = tf.keras.initializers.TruncatedNormal(mean=0.0, stddev=0.075)
+
         self.kernel = self.add_weight(
             shape=(input_shape[-1], self.num_lstm_units * 4),
-            initializer="glorot_uniform",
+            initializer=graves_initializer,
             name=f"lstm_peephole_kernel{self.idx}",
         )
         self.recurrent_kernel = self.add_weight(
             shape=(self.num_lstm_units, self.num_lstm_units * 4),
-            initializer="glorot_uniform",
+            initializer=graves_initializer,
             name=f"lstm_peephole_recurrent_kernel{self.idx}",
         )
 
         # Peephole weights for input, forget, and output gates
         self.peephole_weights = self.add_weight(
             shape=(self.num_lstm_units, 3),
-            initializer="glorot_uniform",
+            initializer=graves_initializer,
             name=f"lstm_peephole_weights{self.idx}",
+        )
+        forget_bias_init = tf.constant_initializer(
+            [0.0] * self.num_lstm_units + [1.0] * self.num_lstm_units + [0.0] * self.num_lstm_units * 2
         )
         self.bias = self.add_weight(
             shape=(self.num_lstm_units * 4,),
-            initializer="zeros",
+            initializer=forget_bias_init,
             name=f"lstm_peephole_bias{self.idx}",
         )
         super().build(input_shape)

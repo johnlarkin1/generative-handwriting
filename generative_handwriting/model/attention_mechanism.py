@@ -20,9 +20,14 @@ class AttentionMechanism(tf.keras.layers.Layer):
         self.kappa_scale = float(kappa_scale)
 
     def build(self, input_shape):
+        graves_initializer = tf.keras.initializers.TruncatedNormal(mean=0.0, stddev=0.075)
+        window_bias_initializer = tf.keras.initializers.TruncatedNormal(mean=-3.0, stddev=0.25)
+
         self.dense_attention = tf.keras.layers.Dense(
             units=3 * self.num_gaussians,
             activation=None,  # No activation - we'll apply exp manually
+            kernel_initializer=graves_initializer,
+            bias_initializer=window_bias_initializer,
             name=f"{self.name_mod}_dense",
         )
         super().build(input_shape)
