@@ -60,6 +60,7 @@ tqdm = "^4.67.0"
 scipy = "^1.14.0"
 tensorboard = "^2.17.0"
 svgwrite = "^1.4.3"
+tensorflow-metal = "^1.2.0"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.9.1"

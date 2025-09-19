@@ -3,8 +3,6 @@ import os
 
 import numpy as np
 import tensorflow as tf
-from alphabet import ALPHABET_SIZE
-from callbacks import ExtendedModelCheckpoint, PrintModelParametersCallback
 from constants import (
     BATCH_SIZE,
     GRADIENT_CLIP_VALUE,
@@ -12,8 +10,11 @@ from constants import (
     NUM_ATTENTION_GAUSSIAN_COMPONENTS,
     NUM_BIVARIATE_GAUSSIAN_MIXTURE_COMPONENTS,
 )
-from loader import HandwritingDataLoader
-from model.handwriting_models import DeepHandwritingSynthesisModel
+
+from generative_handwriting.alphabet import ALPHABET_SIZE
+from generative_handwriting.callbacks import ExtendedModelCheckpoint, PrintModelParametersCallback
+from generative_handwriting.loader import HandwritingDataLoader
+from generative_handwriting.model.handwriting_models import DeepHandwritingSynthesisModel
 
 # We want this to ensure CPU <-> GPU compatibility
 tf.keras.mixed_precision.set_global_policy("float32")

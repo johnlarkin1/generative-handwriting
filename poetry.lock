@@ -1762,6 +1762,24 @@ tensorflow-gpu = ["tensorflow-gpu (>=2.16.0,<2.17.0)"]
 tensorflow-rocm = ["tensorflow-rocm (>=2.16.0,<2.17.0)"]
 
 [[package]]
+name = "tensorflow-metal"
+version = "1.2.0"
+description = "TensorFlow acceleration for Mac GPUs."
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "tensorflow_metal-1.2.0-cp310-cp310-macosx_12_0_arm64.whl", hash = "sha256:bc735e36c97874e41f77ec2e7421ff745d2ec36ee641141c8091e4cc2dbcc819"},
+    {file = "tensorflow_metal-1.2.0-cp311-cp311-macosx_12_0_arm64.whl", hash = "sha256:5fa7cee627031c14f45bd97ff0ef422cd6c3866199ff99cf29b94db6674ceb42"},
+    {file = "tensorflow_metal-1.2.0-cp312-cp312-macosx_12_0_arm64.whl", hash = "sha256:4bece0ecb154b713b9f5ad4aec676a366d312822161e3cf0e1dea737c64cec04"},
+    {file = "tensorflow_metal-1.2.0-cp39-cp39-macosx_12_0_arm64.whl", hash = "sha256:4c52a9f7768b10ac226be758e953973734707161caaee328bd2da0cdf93c4643"},
+]
+
+[package.dependencies]
+six = ">=1.15.0"
+wheel = ">=0.35,<1.0"
+
+[[package]]
 name = "termcolor"
 version = "3.1.0"
 description = "ANSI color formatting for output in terminal"
@@ -1955,4 +1973,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.13"
-content-hash = "3ebfd469713f8b523f402481fbd2c362463fb0da1a4f29f01d437890ff0bc0ab"
+content-hash = "9df751aaf2844de537b7b04a28e48a7965bc52c3f041979b0fe6f5ebcf3b7185"

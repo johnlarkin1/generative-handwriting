@@ -314,7 +314,6 @@ def train_overfit_model(data, epochs=75):
         num_attention_gaussians=5,  # More attention components
         gradient_clip_value=1.0,
         enable_mdn_regularization=False,  # Disable regularization for overfitting
-        attention_kappa_scale=1 / 10.0,  # Increased from default 1/25 for short text like "hello"
     )
 
     # Use moderate learning rate with gradient clipping at optimizer level
@@ -746,7 +745,7 @@ def main():
     visualize_target_sequence(data["original_strokes"], data["original_text"])
 
     # Load existing model or train new one
-    model, losses = load_or_train_model(data, epochs=300)
+    model, losses = load_or_train_model(data, epochs=50)
 
     # Test generation
     test_generation(model, data["original_text"], data["original_strokes"], data["norm_mu"], data["norm_sigma"])

@@ -1,6 +1,6 @@
 import numpy as np
 import tensorflow as tf
-from constants import NUM_MIXTURE_COMPONENTS_PER_COMPONENT
+from generative_handwriting.constants import NUM_MIXTURE_COMPONENTS_PER_COMPONENT
 
 
 class MixtureDensityLayer(tf.keras.layers.Layer):

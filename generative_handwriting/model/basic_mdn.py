@@ -1,6 +1,6 @@
 import numpy as np
 import tensorflow as tf
-from constants import EPSILON
+from generative_handwriting.constants import EPSILON
 
 
 class BasicMixtureDensityNetwork(tf.keras.Model):
