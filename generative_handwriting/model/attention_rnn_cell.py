@@ -3,11 +3,12 @@ import tensorflow as tf
 
 @tf.keras.utils.register_keras_serializable()
 class AttentionRNNCell(tf.keras.layers.Layer):
-    def __init__(self, lstm_cells, attention_mechanism, num_chars, **kwargs):
+    def __init__(self, lstm_cells, attention_mechanism, num_chars, debug=False, **kwargs):
         super().__init__(**kwargs)
         self.lstm_cells = lstm_cells  # Should be a list of 3 LSTM cells
         self.attention_mechanism = attention_mechanism
         self.num_chars = num_chars
+        self.debug = debug
 
         # Flatten the state sizes
         self.state_size = []

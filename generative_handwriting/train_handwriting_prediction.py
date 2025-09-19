@@ -1,14 +1,11 @@
+# ruff: noqa: E402
 import os
 
 import numpy as np
 import tensorflow as tf
 
-# Enable XLA compilation for better GPU utilization
 tf.config.optimizer.set_jit(True)
-print("🚀 XLA JIT compilation enabled")
-from common import (
-    print_model_parameters,
-)
+
 from constants import (
     BATCH_SIZE,
     GRADIENT_CLIP_VALUE,
@@ -16,15 +13,17 @@ from constants import (
     NUM_BIVARIATE_GAUSSIAN_MIXTURE_COMPONENTS,
     NUM_EPOCH,
 )
-from debug_utils import NaNMonitor, log_tensor_statistics, check_data_batch
-from loader import HandwritingDataLoader
-from model.handwriting_models import DeepHandwritingPredictionModel
-from model.mixture_density_network import MixtureDensityLayer, mdn_loss
-from model_io import load_epochs_info, save_epochs_info
+
+from generative_handwriting.common import print_model_parameters
+from generative_handwriting.debug_utils import NaNMonitor, check_data_batch, log_tensor_statistics
+from generative_handwriting.loader import HandwritingDataLoader
+from generative_handwriting.model.handwriting_models import DeepHandwritingPredictionModel
+from generative_handwriting.model.mixture_density_network import MixtureDensityLayer, mdn_loss
+from generative_handwriting.model_io import load_epochs_info, save_epochs_info
 
 curr_directory = os.path.dirname(os.path.realpath(__file__))
 model_save_dir = f"{curr_directory}/saved_models/full_handwriting_prediction/"
-os.makedirs(model_save_dir, exist_ok=True)  # Create directory if it doesn't exist
+os.makedirs(model_save_dir, exist_ok=True)
 model_save_path = os.path.join(model_save_dir, "best_model.keras")
 epochs_info_path = os.path.join(model_save_dir, "epochs_info.json")
 num_mixture_components = NUM_BIVARIATE_GAUSSIAN_MIXTURE_COMPONENTS

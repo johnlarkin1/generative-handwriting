@@ -1,20 +1,19 @@
 from typing import Any, Dict, Optional, Tuple, Union
 
 import tensorflow as tf
-from alphabet import ALPHABET_SIZE
-from constants import (
-    BATCH_SIZE,
+
+from generative_handwriting.alphabet import ALPHABET_SIZE
+from generative_handwriting.constants import (
     GRADIENT_CLIP_VALUE,
     NUM_ATTENTION_GAUSSIAN_COMPONENTS,
     NUM_BIVARIATE_GAUSSIAN_MIXTURE_COMPONENTS,
     NUM_LSTM_CELLS_PER_HIDDEN_LAYER,
     NUM_LSTM_HIDDEN_LAYERS,
 )
-
-from model.attention_mechanism import AttentionMechanism
-from model.attention_rnn_cell import AttentionRNNCell
-from model.lstm_peephole_cell import LSTMPeepholeCell
-from model.mixture_density_network import MixtureDensityLayer, mdn_loss
+from generative_handwriting.model.attention_mechanism import AttentionMechanism
+from generative_handwriting.model.attention_rnn_cell import AttentionRNNCell
+from generative_handwriting.model.lstm_peephole_cell import LSTMPeepholeCell
+from generative_handwriting.model.mixture_density_network import MixtureDensityLayer, mdn_loss
 
 
 class SimpleLSTMModel(tf.keras.Model):
@@ -99,74 +98,6 @@ class DeepHandwritingPredictionModel(tf.keras.Model):
         return cls(**config)
 
 
-class DeepHandwritingSynthesisExplicitModel(tf.keras.Model):
-    def __init__(
-        self,
-        batch_size=BATCH_SIZE,
-        units=400,
-        num_layers=3,
-        num_mixture_components=20,
-        num_chars=73,
-        num_attention_gaussians=10,
-        **kwargs,
-    ):
-        super(DeepHandwritingSynthesisExplicitModel, self).__init__(**kwargs)
-        self.batch_size = batch_size
-        self.units = units
-        self.num_layers = num_layers
-        self.num_mixture_components = num_mixture_components
-        self.num_chars = num_chars
-        self.num_attention_gaussians = num_attention_gaussians
-        self.lstm_cells = [LSTMPeepholeCell(units, idx) for idx in range(num_layers)]
-        self.attention_mechanism = AttentionMechanism(
-            num_gaussians=num_attention_gaussians,
-            num_chars=num_chars,
-            batch_size=batch_size,
-        )
-        self.mdn_layer = MixtureDensityLayer(num_mixture_components)
-
-    def initial_state(self, batch_size):
-        states = {
-            f"s{i + 1}": self.lstm_cells[i].get_initial_state(batch_size=batch_size) for i in range(self.num_layers)
-        }
-        states["kappa"] = tf.zeros((batch_size, self.num_attention_gaussians))
-        states["w"] = tf.zeros((batch_size, self.num_chars))
-        return states
-
-    def call(self, inputs, state, char_seq, char_seq_lengths, training=None):
-        char_seq_one_hot = tf.one_hot(char_seq, depth=self.num_chars)
-        outputs = []
-        for step in range(inputs.shape[1]):
-            x_t = inputs[:, step, :]
-            s1_in = tf.concat([state["w"], x_t], axis=1)
-            s1_out, s1_state = self.lstm_cells[0](s1_in, states=state["s1"])
-            state["s1"] = s1_state
-
-            attention_inputs = tf.concat([state["w"], x_t, s1_out], axis=1)
-            w, kappa = self.attention_mechanism(
-                attention_inputs,
-                state["kappa"],
-                char_seq_one_hot,
-                char_seq_lengths,
-            )
-            state["w"] = w
-            state["kappa"] = kappa
-
-            s2_in = tf.concat([x_t, s1_out, w], axis=1)
-            s2_out, s2_state = self.lstm_cells[1](s2_in, states=state["s2"])
-            state["s2"] = s2_state
-
-            s3_in = tf.concat([x_t, s2_out, w], axis=1)
-            s3_out, s3_state = self.lstm_cells[2](s3_in, states=state["s3"])
-            state["s3"] = s3_state
-
-            outputs.append(s3_out)
-
-        outputs = tf.stack(outputs, axis=1)
-        final_output = self.mdn_layer(outputs)
-        return final_output, state
-
-
 @tf.keras.utils.register_keras_serializable()
 class DeepHandwritingSynthesisModel(tf.keras.Model):
     """
@@ -183,7 +114,6 @@ class DeepHandwritingSynthesisModel(tf.keras.Model):
         num_attention_gaussians=NUM_ATTENTION_GAUSSIAN_COMPONENTS,
         gradient_clip_value=GRADIENT_CLIP_VALUE,
         enable_mdn_regularization=True,
-        attention_kappa_scale=1/25.0,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -194,9 +124,8 @@ class DeepHandwritingSynthesisModel(tf.keras.Model):
         self.num_attention_gaussians = num_attention_gaussians
         self.gradient_clip_value = gradient_clip_value
         self.enable_mdn_regularization = enable_mdn_regularization
-        self.attention_kappa_scale = attention_kappa_scale
         self.lstm_cells = [LSTMPeepholeCell(units, idx) for idx in range(num_layers)]
-        self.attention_mechanism = AttentionMechanism(num_gaussians=num_attention_gaussians, num_chars=num_chars, kappa_scale=attention_kappa_scale)
+        self.attention_mechanism = AttentionMechanism(num_gaussians=num_attention_gaussians, num_chars=num_chars)
         self.attention_rnn_cell = AttentionRNNCell(self.lstm_cells, self.attention_mechanism, self.num_chars)
         self.rnn_layer = tf.keras.layers.RNN(self.attention_rnn_cell, return_sequences=True)
         self.mdn_layer = MixtureDensityLayer(num_mixture_components, enable_regularization=enable_mdn_regularization)
@@ -291,7 +220,7 @@ class DeepHandwritingSynthesisModel(tf.keras.Model):
                 "num_chars": self.num_chars,
                 "num_attention_gaussians": self.num_attention_gaussians,
                 "enable_mdn_regularization": self.enable_mdn_regularization,
-                "attention_kappa_scale": self.attention_kappa_scale,
+                "debug": self.attention_mechanism.debug,
             }
         )
         return config

@@ -1,4 +1,3 @@
-import numpy as np
 import tensorflow as tf
 
 
@@ -12,16 +11,31 @@ class AttentionMechanism(tf.keras.layers.Layer):
     at each time step.
     """
 
-    def __init__(self, num_gaussians, num_chars, name="attention", kappa_scale=1 / 25.0, **kwargs) -> None:
+    def __init__(self, num_gaussians, num_chars, name="attention", debug=False, **kwargs) -> None:
         super(AttentionMechanism, self).__init__(**kwargs)
         self.num_gaussians = num_gaussians
         self.num_chars = num_chars
         self.name_mod = name
-        self.kappa_scale = float(kappa_scale)
+        self.debug = debug
+
+    @staticmethod
+    def _center_of_mass(phi: tf.Tensor) -> tf.Tensor:
+        """
+        phi: [B, L] (non-normalized, masked)
+        returns: [B] center of mass in character index space (1..L)
+        """
+        B = tf.shape(phi)[0]
+        L = tf.shape(phi)[1]
+        u = tf.cast(tf.range(1, L + 1), tf.float32)  # [L], 1-based
+        u = tf.reshape(u, [1, L])  # [1, L]
+        Z = tf.reduce_sum(phi, axis=1, keepdims=True) + 1e-8  # [B,1]
+        phi_norm = phi / Z  # [B, L]
+        com = tf.reduce_sum(phi_norm * u, axis=1)  # [B]
+        return com
 
     def build(self, input_shape):
         graves_initializer = tf.keras.initializers.TruncatedNormal(mean=0.0, stddev=0.075)
-        window_bias_initializer = tf.keras.initializers.TruncatedNormal(mean=-3.0, stddev=0.25)
+        window_bias_initializer = tf.keras.initializers.TruncatedNormal(mean=-1.0, stddev=0.25)
 
         self.dense_attention = tf.keras.layers.Dense(
             units=3 * self.num_gaussians,
@@ -30,22 +44,30 @@ class AttentionMechanism(tf.keras.layers.Layer):
             bias_initializer=window_bias_initializer,
             name=f"{self.name_mod}_dense",
         )
+
+        # learnable scale to help out how we're moving
+        self.kappa_scale = self.add_weight(
+            name="kappa_scale",
+            shape=(),
+            initializer=tf.keras.initializers.Constant(-2.5),  # exp(-2.5) ≈ 0.082
+            trainable=True,
+        )
+
         super().build(input_shape)
 
     def call(self, inputs, prev_kappa, char_seq_one_hot, sequence_lengths):
-        # Generate concatenated attention parameters - use raw outputs, apply exp manually
         raw = self.dense_attention(inputs)
         alpha_hat, beta_hat, kappa_hat = tf.split(raw, 3, axis=1)
 
-        # Apply exp activation as in Graves eq. 48-51
+        # apply exp activation as in Graves eq. 48-51
         alpha = tf.exp(alpha_hat)
         beta = tf.exp(beta_hat)
-        kappa = prev_kappa + tf.exp(kappa_hat) * self.kappa_scale
+        delta_kappa = tf.exp(kappa_hat + self.kappa_scale)  # smaller initial step with learnable scale
+        kappa = prev_kappa + delta_kappa  # Eq. 51 cumulative monotonic
 
-        # Tiling 'enum' across batch size and number of attention mixture components
         char_len = tf.shape(char_seq_one_hot)[1]
         batch_size = tf.shape(inputs)[0]
-        u = tf.cast(tf.range(0, char_len), tf.float32)  # Shape: [char_len]
+        u = tf.cast(tf.range(1, char_len + 1), tf.float32)  # Shape: [char_len] - 1-based indexing as in Graves
         u = tf.reshape(u, [1, 1, -1])  # Shape: [1, 1, char_len]
         u = tf.tile(u, [batch_size, self.num_gaussians, 1])  # Shape: [batch_size, num_gaussians, char_len]
 
@@ -59,21 +81,17 @@ class AttentionMechanism(tf.keras.layers.Layer):
         exponent = -beta * tf.square(kappa - u)
         exponent = tf.clip_by_value(exponent, -50.0, 50.0)
         phi = alpha * tf.exp(exponent)  # Shape: [batch_size, num_gaussians, char_len]
-        phi = tf.reduce_sum(phi, axis=1)  # Sum over the gaussians: [batch_size, char_len]
+        phi = tf.reduce_sum(phi, axis=1)  # Sum over gaussians: [B, L]
 
         # sequence mask
         sequence_mask = tf.sequence_mask(sequence_lengths, maxlen=char_len, dtype=tf.float32)
-        phi = phi * sequence_mask  # Apply mask to attention weights
-
-        # normalize with stronger epsilon for numerical stability
-        phi_sum = tf.reduce_sum(phi, axis=1, keepdims=True) + 1e-6
-        phi = phi / phi_sum
+        phi = phi * sequence_mask  # mask paddings
+        # we don't normalize here - Graves calls that out specifically
 
         # window vec
         phi = tf.expand_dims(phi, axis=-1)  # Shape: [batch_size, char_len, 1]
         w = tf.reduce_sum(phi * char_seq_one_hot, axis=1)  # Shape: [batch_size, num_chars]
-
-        return w, kappa[:, :, 0]  # Return updated kappa
+        return w, kappa[:, :, 0]
 
     def get_config(self):
         config = super().get_config()
@@ -82,6 +100,7 @@ class AttentionMechanism(tf.keras.layers.Layer):
                 "num_gaussians": self.num_gaussians,
                 "num_chars": self.num_chars,
                 "name": self.name_mod,
+                "debug": self.debug,
             }
         )
         return config
@@ -89,58 +108,3 @@ class AttentionMechanism(tf.keras.layers.Layer):
     @classmethod
     def from_config(cls, config):
         return cls(**config)
-
-
-@tf.keras.utils.register_keras_serializable()
-class AttentionMechanismBatch(tf.keras.layers.Layer):
-    """
-    Deprecated. Does not make sense to use the attention
-    mechanism in a batched manner. This is kept for reference
-    """
-
-    def __init__(self, num_gaussians, num_chars, name="attention", **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.num_gaussians = num_gaussians
-        self.num_chars = num_chars
-        self.name = name
-        self.dense_attention = tf.keras.layers.Dense(
-            units=3 * num_gaussians,
-            activation="softplus",
-            name=f"{self.name}_dense",
-        )
-
-    def call(self, inputs, prev_kappa, char_seq_one_hot, char_seq_len):
-        # Assumes inputs is of shape [batch_size, timesteps, features]
-        attention_params = self.dense_attention(inputs)
-        alpha, beta, kappa_increment = tf.split(attention_params, 3, axis=-1)
-
-        kappa = prev_kappa + kappa_increment / 25.0
-        beta = tf.clip_by_value(beta, 0.01, np.inf)
-
-        char_len = tf.shape(char_seq_one_hot)[1]
-        batch_size = tf.shape(inputs)[0]
-        timesteps = tf.shape(inputs)[1]
-
-        enum = tf.reshape(tf.range(char_len), (1, 1, 1, char_len))
-        u = tf.cast(tf.tile(enum, (batch_size, timesteps, self.num_gaussians, 1)), tf.float32)
-
-        kappa = tf.expand_dims(kappa, axis=-1)
-        alpha = tf.expand_dims(alpha, axis=-1)
-        beta = tf.expand_dims(beta, axis=-1)
-
-        phi = tf.reduce_sum(alpha * tf.exp(-tf.square(kappa - u) / beta), axis=2)
-        phi = tf.expand_dims(phi, axis=3)
-
-        # Create a sequence mask based on char_seq_len, expanded for broadcasting
-        sequence_mask = tf.sequence_mask(char_seq_len, maxlen=char_len, dtype=tf.float32)
-        # [batch_size, timesteps, 1, 1] for broadcasting
-        sequence_mask = tf.expand_dims(sequence_mask, axis=-1)
-
-        # Apply the mask to phi before summing over the characters
-        # This ensures attention is only applied to valid parts of the sequence
-        phi_masked = phi * sequence_mask
-
-        # Calculate weighted sum of character sequences, applying the mask
-        w = tf.reduce_sum(phi_masked * char_seq_one_hot, axis=2)
-
-        return w, kappa
