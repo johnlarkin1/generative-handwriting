@@ -372,6 +372,10 @@ class HandwritingDataLoader:
             valid1_strokes,
             valid1_stroke_lengths,
         )
+        self.validation_transcriptions, self.validation_transcription_lengths = (
+            valid1_trans,
+            valid1_trans_lengths,
+        )
 
 
 if __name__ == "__main__":

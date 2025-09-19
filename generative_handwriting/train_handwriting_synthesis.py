@@ -15,6 +15,7 @@ from generative_handwriting.alphabet import ALPHABET_SIZE
 from generative_handwriting.callbacks import ExtendedModelCheckpoint, PrintModelParametersCallback
 from generative_handwriting.loader import HandwritingDataLoader
 from generative_handwriting.model.handwriting_models import DeepHandwritingSynthesisModel
+from generative_handwriting.model.mixture_density_network import mdn_loss
 
 # We want this to ensure CPU <-> GPU compatibility
 tf.keras.mixed_precision.set_global_policy("float32")
@@ -54,6 +55,93 @@ combined_train_trans, combined_trans_lengths = (
     data_loader.combined_train_transcriptions,
     data_loader.combined_train_transcription_lengths,
 )
+
+# Get validation data for Graves metric
+validation_strokes, validation_lengths = (
+    data_loader.validation_strokes,
+    data_loader.validation_stroke_lengths,
+)
+
+
+def compute_graves_log_loss_synthesis(model, stroke_data, stroke_lengths, char_data, char_lengths, num_mixture_components, batch_size=32):
+    """Compute Graves log-loss metric for synthesis model (mean NLL per timestep in nats).
+
+    This matches the metric reported in Table 3 of Graves' paper.
+    """
+    total_nll = 0.0
+    total_timesteps = 0
+    total_sse = 0.0  # Sum squared error
+
+    num_samples = len(stroke_data)
+    num_batches = (num_samples + batch_size - 1) // batch_size
+
+    for i in range(num_batches):
+        start_idx = i * batch_size
+        end_idx = min((i + 1) * batch_size, num_samples)
+
+        batch_strokes = stroke_data[start_idx:end_idx]
+        batch_stroke_lens = stroke_lengths[start_idx:end_idx]
+        batch_chars = char_data[start_idx:end_idx]
+        batch_char_lens = char_lengths[start_idx:end_idx]
+
+        # Prepare targets (next stroke predictions)
+        batch_targets = np.zeros_like(batch_strokes)
+        batch_targets[:, :-1, :] = batch_strokes[:, 1:, :]
+        batch_target_lens = np.maximum(batch_stroke_lens - 1, 1)
+
+        # Prepare model inputs
+        inputs = {
+            "input_strokes": batch_strokes,
+            "input_stroke_lens": batch_stroke_lens,
+            "target_stroke_lens": batch_target_lens,
+            "input_chars": batch_chars,
+            "input_char_lens": batch_char_lens,
+        }
+
+        # Get predictions
+        predictions = model(inputs, training=False)
+
+        # Compute NLL for this batch
+        batch_nll = mdn_loss(batch_targets, predictions, batch_target_lens, num_mixture_components)
+
+        # Accumulate totals
+        batch_timesteps = np.sum(batch_target_lens)
+        total_nll += batch_nll.numpy() * batch_timesteps
+        total_timesteps += batch_timesteps
+
+        # Compute SSE (sum squared error) for comparison
+        # Extract means from predictions
+        mu_x = predictions[:, :, num_mixture_components:2*num_mixture_components]
+        mu_y = predictions[:, :, 2*num_mixture_components:3*num_mixture_components]
+        pi = predictions[:, :, :num_mixture_components]
+
+        # Get most likely component for each timestep
+        best_components = tf.argmax(pi, axis=-1)
+        batch_size_curr = tf.shape(mu_x)[0]
+        seq_len = tf.shape(mu_x)[1]
+
+        # Gather the means for the most likely components
+        indices = tf.stack([tf.range(batch_size_curr)[:, None] * tf.ones([1, seq_len], dtype=tf.int32),
+                           tf.range(seq_len)[None, :] * tf.ones([batch_size_curr, 1], dtype=tf.int32),
+                           best_components], axis=-1)
+
+        pred_x = tf.gather_nd(mu_x, indices)
+        pred_y = tf.gather_nd(mu_y, indices)
+
+        # Compute SSE
+        actual_x = batch_targets[:, :, 0]
+        actual_y = batch_targets[:, :, 1]
+
+        # Apply mask for valid timesteps
+        mask = tf.sequence_mask(batch_target_lens, maxlen=tf.shape(batch_targets)[1], dtype=tf.float32)
+        squared_error = ((pred_x - actual_x)**2 + (pred_y - actual_y)**2) * mask
+        total_sse += tf.reduce_sum(squared_error).numpy()
+
+    # Compute averages
+    graves_log_loss = -total_nll / max(total_timesteps, 1)  # Negative log-likelihood in nats
+    mean_sse = total_sse / max(total_timesteps, 1)
+
+    return graves_log_loss, mean_sse
 
 if __name__ == "__main__":
     # Preparing the input and target data for training
@@ -116,22 +204,45 @@ if __name__ == "__main__":
         jit_compile=True,  # Enable XLA JIT compilation for better performance
     )
 
+    # Add custom callback for validation metrics
+    class GravesMetricsCallback(tf.keras.callbacks.Callback):
+        def __init__(self, val_strokes, val_stroke_lens, val_chars, val_char_lens, num_components):
+            super().__init__()
+            self.val_strokes = val_strokes
+            self.val_stroke_lens = val_stroke_lens
+            self.val_chars = val_chars
+            self.val_char_lens = val_char_lens
+            self.num_components = num_components
+            self.best_val_loss = float('inf')
+
+        def on_epoch_end(self, epoch, logs=None):
+            if epoch % 5 == 0:  # Evaluate every 5 epochs to save time
+                print(f"\nComputing validation metrics for epoch {epoch + 1}...")
+                val_log_loss, val_sse = compute_graves_log_loss_synthesis(
+                    self.model, self.val_strokes, self.val_stroke_lens,
+                    self.val_chars, self.val_char_lens, self.num_components
+                )
+                print(f"Validation Graves Log-Loss: {val_log_loss:.1f} nats")
+                print(f"Validation SSE: {val_sse:.4f}")
+
+                # Save model if validation loss improved
+                if val_log_loss < self.best_val_loss:
+                    print(f"New best validation log-loss {val_log_loss:.1f}, saving model.")
+                    self.best_val_loss = val_log_loss
+                    self.model.save(model_save_path)
+
+    # Prepare validation data for synthesis model
+    val_chars = data_loader.validation_transcriptions
+    val_char_lens = data_loader.validation_transcription_lengths
+
     callbacks = [
-        tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=0),  # Basic logging for XLA compatibility
-        # tf.keras.callbacks.ModelCheckpoint(
-        #     filepath=checkpoint_model_filepath,
-        #     monitor='loss',
-        #     save_best_only=True,
-        #     save_weights_only=False,
-        #     mode='min',
-        #     verbose=1
-        # ),
+        tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=0),
         tf.keras.callbacks.ReduceLROnPlateau(monitor="loss", factor=0.8, patience=10, verbose=1, min_lr=1e-6),
-        # ModelCheckpointWithPeriod(model_name, period=200),  # Keep at 200 to save disk space
         ExtendedModelCheckpoint(model_name),
         PrintModelParametersCallback(),
+        GravesMetricsCallback(validation_strokes, validation_lengths, val_chars, val_char_lens, num_mixture_components),
     ]
 
     history = stroke_model.fit(dataset, epochs=desired_epochs, callbacks=callbacks)
-    stroke_model.save(model_save_path)
+    stroke_model.save(model_save_path_final)
     print("Training completed.")

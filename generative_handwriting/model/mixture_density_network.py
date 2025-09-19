@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+
 from generative_handwriting.constants import NUM_MIXTURE_COMPONENTS_PER_COMPONENT
 
 
@@ -9,7 +10,7 @@ class MixtureDensityLayer(tf.keras.layers.Layer):
         num_components,
         name="mdn",
         temperature=1.0,
-        enable_regularization=True,
+        enable_regularization=False,
         sigma_reg_weight=0.01,
         rho_reg_weight=0.01,
         entropy_reg_weight=0.1,

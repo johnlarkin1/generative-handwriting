@@ -9,6 +9,7 @@ from generative_handwriting.constants import (
     NUM_BIVARIATE_GAUSSIAN_MIXTURE_COMPONENTS,
     NUM_LSTM_CELLS_PER_HIDDEN_LAYER,
     NUM_LSTM_HIDDEN_LAYERS,
+    NUM_MIXTURE_COMPONENTS_PER_COMPONENT,
 )
 from generative_handwriting.model.attention_mechanism import AttentionMechanism
 from generative_handwriting.model.attention_rnn_cell import AttentionRNNCell
@@ -82,6 +83,10 @@ class DeepHandwritingPredictionModel(tf.keras.Model):
         output = self.mdn_layer(x)
         return output
 
+    @property
+    def output_shape(self):
+        return (None, None, self.num_mixture_components * NUM_MIXTURE_COMPONENTS_PER_COMPONENT + 1)
+
     def get_config(self):
         config = super(DeepHandwritingPredictionModel, self).get_config()
         config.update(
@@ -114,6 +119,7 @@ class DeepHandwritingSynthesisModel(tf.keras.Model):
         num_attention_gaussians=NUM_ATTENTION_GAUSSIAN_COMPONENTS,
         gradient_clip_value=GRADIENT_CLIP_VALUE,
         enable_mdn_regularization=True,
+        debug=False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -129,6 +135,7 @@ class DeepHandwritingSynthesisModel(tf.keras.Model):
         self.attention_rnn_cell = AttentionRNNCell(self.lstm_cells, self.attention_mechanism, self.num_chars)
         self.rnn_layer = tf.keras.layers.RNN(self.attention_rnn_cell, return_sequences=True)
         self.mdn_layer = MixtureDensityLayer(num_mixture_components, enable_regularization=enable_mdn_regularization)
+        self.debug = debug
 
         # Metric trackers for proper loss aggregation
         self.loss_tracker = tf.keras.metrics.Mean(name="loss")
@@ -209,6 +216,10 @@ class DeepHandwritingSynthesisModel(tf.keras.Model):
 
         # Set the model's built flag
         self._is_built = True
+
+    @property
+    def output_shape(self):
+        return (None, None, self.num_mixture_components * NUM_MIXTURE_COMPONENTS_PER_COMPONENT + 1)
 
     def get_config(self) -> Dict[str, Any]:
         config = super().get_config()

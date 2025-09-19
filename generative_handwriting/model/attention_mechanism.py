@@ -24,7 +24,6 @@ class AttentionMechanism(tf.keras.layers.Layer):
         phi: [B, L] (non-normalized, masked)
         returns: [B] center of mass in character index space (1..L)
         """
-        B = tf.shape(phi)[0]
         L = tf.shape(phi)[1]
         u = tf.cast(tf.range(1, L + 1), tf.float32)  # [L], 1-based
         u = tf.reshape(u, [1, L])  # [1, L]

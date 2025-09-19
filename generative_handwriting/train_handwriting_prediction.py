@@ -34,6 +34,73 @@ def model_mdn_loss(actual, outputs, combined_train_lengths, num_mixture_componen
     return mdn_loss(actual, outputs, combined_train_lengths, num_mixture_components)
 
 
+def compute_graves_log_loss(model, x_data, y_data, seq_lengths, num_mixture_components, batch_size=32):
+    """Compute Graves log-loss metric (mean NLL per timestep in nats).
+
+    This matches the metric reported in Table 3 of Graves' paper.
+    """
+    total_nll = 0.0
+    total_timesteps = 0
+    total_sse = 0.0  # Sum squared error
+
+    num_samples = len(x_data)
+    num_batches = (num_samples + batch_size - 1) // batch_size
+
+    for i in range(num_batches):
+        start_idx = i * batch_size
+        end_idx = min((i + 1) * batch_size, num_samples)
+
+        batch_x = x_data[start_idx:end_idx]
+        batch_y = y_data[start_idx:end_idx]
+        batch_len = seq_lengths[start_idx:end_idx]
+
+        # Get predictions
+        predictions = model(batch_x, training=False)
+
+        # Compute NLL for this batch
+        batch_nll = mdn_loss(batch_y, predictions, batch_len, num_mixture_components)
+
+        # The mdn_loss returns average loss per valid timestep
+        # We need to accumulate the total
+        batch_timesteps = np.sum(batch_len)
+        total_nll += batch_nll.numpy() * batch_timesteps
+        total_timesteps += batch_timesteps
+
+        # Compute SSE (sum squared error) for comparison
+        # Extract means from predictions (indices num_components:3*num_components)
+        mu_x = predictions[:, :, num_mixture_components:2*num_mixture_components]
+        mu_y = predictions[:, :, 2*num_mixture_components:3*num_mixture_components]
+        pi = predictions[:, :, :num_mixture_components]
+
+        # Get most likely component for each timestep
+        best_components = tf.argmax(pi, axis=-1)
+        batch_size_curr = tf.shape(mu_x)[0]
+        seq_len = tf.shape(mu_x)[1]
+
+        # Gather the means for the most likely components
+        indices = tf.stack([tf.range(batch_size_curr)[:, None] * tf.ones([1, seq_len], dtype=tf.int32),
+                           tf.range(seq_len)[None, :] * tf.ones([batch_size_curr, 1], dtype=tf.int32),
+                           best_components], axis=-1)
+
+        pred_x = tf.gather_nd(mu_x, indices)
+        pred_y = tf.gather_nd(mu_y, indices)
+
+        # Compute SSE
+        actual_x = batch_y[:, :, 0]
+        actual_y = batch_y[:, :, 1]
+
+        # Apply mask for valid timesteps
+        mask = tf.sequence_mask(batch_len, maxlen=tf.shape(batch_y)[1], dtype=tf.float32)
+        squared_error = ((pred_x - actual_x)**2 + (pred_y - actual_y)**2) * mask
+        total_sse += tf.reduce_sum(squared_error).numpy()
+
+    # Compute averages
+    graves_log_loss = -total_nll / max(total_timesteps, 1)  # Negative log-likelihood in nats
+    mean_sse = total_sse / max(total_timesteps, 1)
+
+    return graves_log_loss, mean_sse
+
+
 def load_model_if_exists(model_save_path):
     try:
         return (
@@ -61,6 +128,12 @@ if __name__ == "__main__":
         data_loader.combined_train_stroke_lengths,
     )
 
+    # Get validation data for Graves metric
+    validation_strokes, validation_lengths = (
+        data_loader.validation_strokes,
+        data_loader.validation_stroke_lengths,
+    )
+
     stroke_model, model_loaded = load_model_if_exists(model_save_path)
     desired_epochs = NUM_EPOCH
 
@@ -70,6 +143,13 @@ if __name__ == "__main__":
     y_train[:, :-1, :] = x_train[:, 1:, :]
     # Graves: labels are x_{t+1}, so there are (len-1) valid targets per sequence.
     y_train_len = np.maximum(x_train_len - 1, 1)
+
+    # Prepare validation data
+    x_val = validation_strokes
+    x_val_len = validation_lengths
+    y_val = np.zeros_like(x_val)
+    y_val[:, :-1, :] = x_val[:, 1:, :]
+    y_val_len = np.maximum(x_val_len - 1, 1)
 
     best_loss = float("inf")
 
@@ -181,12 +261,27 @@ if __name__ == "__main__":
 
         # After each epoch, check if the average loss is the best so far
         epoch_loss = sum(epoch_losses) / len(epoch_losses)
-        print(f"Epoch {epoch + 1} Average Loss: {epoch_loss}")
+        print(f"Epoch {epoch + 1} Average Training Loss: {epoch_loss}")
 
-        # Optionally, evaluate on a validation dataset here and use that loss instead
-        if epoch_loss < best_loss:
-            print(f"New best loss {epoch_loss}, saving model.")
-            best_loss = epoch_loss
+        # Compute validation metrics (Graves log-loss and SSE)
+        print("Computing validation metrics...")
+        val_log_loss, val_sse = compute_graves_log_loss(
+            stroke_model, x_val, y_val, y_val_len, num_mixture_components
+        )
+        print(f"Validation Graves Log-Loss: {val_log_loss:.1f} nats")
+        print(f"Validation SSE: {val_sse:.4f}")
+
+        # Also compute training set Graves metric for comparison
+        train_log_loss, train_sse = compute_graves_log_loss(
+            stroke_model, x_train[:1000], y_train[:1000], y_train_len[:1000], num_mixture_components
+        )
+        print(f"Training Graves Log-Loss (first 1000): {train_log_loss:.1f} nats")
+        print(f"Training SSE (first 1000): {train_sse:.4f}")
+
+        # Use validation log-loss for model selection
+        if val_log_loss < best_loss:
+            print(f"New best validation log-loss {val_log_loss:.1f}, saving model.")
+            best_loss = val_log_loss
             stroke_model.save(model_save_path)  # Save the model
         save_epochs_info(epoch + 1, epochs_info_path)
 
