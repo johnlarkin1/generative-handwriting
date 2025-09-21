@@ -218,7 +218,9 @@ def mdn_loss(y_true, y_pred, stroke_lengths, num_components, eps=1e-6):
 
     # Calculate log probabilities for the bivariate normal distribution
     # Log of normalization constant with safer log operations
-    log_norm = -tf.math.log(2 * np.pi) - tf.math.log(out_sigma1) - tf.math.log(out_sigma2)
+    # Use tf.constant with proper dtype to avoid float64/float32 mismatch
+    pi_const = tf.constant(2 * np.pi, dtype=out_sigma1.dtype)
+    log_norm = -tf.math.log(pi_const) - tf.math.log(out_sigma1) - tf.math.log(out_sigma2)
 
     # Handle correlation term in log space with bounds check
     rho_squared = tf.square(out_rho)

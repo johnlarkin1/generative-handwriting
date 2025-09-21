@@ -23,8 +23,10 @@ markers = [
     "end_to_end_test: Tests the behavior of a full application, end-to-end."
 ]
 testpaths = [
-    "generative_handwriting/test"
+    "tests"
 ]
+# Exclude archived directory from test discovery
+norecursedirs = ["archived", "handwriting-synthesis", ".venv", "venv", "__pycache__", "*.egg-info"]
 # Skip files that contain training scripts rather than actual tests
 python_files = [
     "test_*.py",

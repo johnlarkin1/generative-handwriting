@@ -97,17 +97,9 @@ poetry run python generative_handwriting/visualize_predictions.py         # Gene
 
 ### Test Structure
 
-Tests in `generative_handwriting/test/` are organized by complexity:
+Tests in `tests/` are organized by complexity:
 
-- **Unit tests** (`test_lstm.py`, `test_basic_mdn.py`): Test individual components
-- **Integration tests** (`test_handwriting_prediction_*.py`): Test model training loops
-- **End-to-end tests** (`test_handwriting_synthesis_*.py`): Full synthesis pipeline
-
-Note: Tests are marked with pytest markers defined in `pyproject.toml`:
-
-- `unit_test`: Isolated function tests
-- `integration_test`: Tests with external dependencies
-- `end_to_end_test`: Complete workflow tests
+- Please use pytest for our tests
 
 ## Data
 
