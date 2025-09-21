@@ -64,9 +64,9 @@ validation_strokes, validation_lengths = (
 
 
 def compute_graves_log_loss_synthesis(model, stroke_data, stroke_lengths, char_data, char_lengths, num_mixture_components, batch_size=32):
-    """Compute Graves log-loss metric for synthesis model (mean NLL per timestep in nats).
+    """Compute mean negative log-likelihood (NLL) per timestep in nats.
 
-    This matches the metric reported in Table 3 of Graves' paper.
+    This aligns with the training objective and avoids confusing sign conventions.
     """
     total_nll = 0.0
     total_timesteps = 0
@@ -116,7 +116,7 @@ def compute_graves_log_loss_synthesis(model, stroke_data, stroke_lengths, char_d
         pi = predictions[:, :, :num_mixture_components]
 
         # Get most likely component for each timestep
-        best_components = tf.argmax(pi, axis=-1)
+        best_components = tf.cast(tf.argmax(pi, axis=-1), tf.int32)
         batch_size_curr = tf.shape(mu_x)[0]
         seq_len = tf.shape(mu_x)[1]
 
@@ -134,11 +134,14 @@ def compute_graves_log_loss_synthesis(model, stroke_data, stroke_lengths, char_d
 
         # Apply mask for valid timesteps
         mask = tf.sequence_mask(batch_target_lens, maxlen=tf.shape(batch_targets)[1], dtype=tf.float32)
-        squared_error = ((pred_x - actual_x)**2 + (pred_y - actual_y)**2) * mask
+        # Guard against NaNs in predictions (should be rare after stability fixes)
+        pred_x = tf.where(tf.math.is_finite(pred_x), pred_x, tf.zeros_like(pred_x))
+        pred_y = tf.where(tf.math.is_finite(pred_y), pred_y, tf.zeros_like(pred_y))
+        squared_error = ((pred_x - actual_x) ** 2 + (pred_y - actual_y) ** 2) * mask
         total_sse += tf.reduce_sum(squared_error).numpy()
 
     # Compute averages
-    graves_log_loss = -total_nll / max(total_timesteps, 1)  # Negative log-likelihood in nats
+    graves_log_loss = total_nll / max(total_timesteps, 1)  # Mean NLL in nats
     mean_sse = total_sse / max(total_timesteps, 1)
 
     return graves_log_loss, mean_sse
@@ -222,12 +225,12 @@ if __name__ == "__main__":
                     self.model, self.val_strokes, self.val_stroke_lens,
                     self.val_chars, self.val_char_lens, self.num_components
                 )
-                print(f"Validation Graves Log-Loss: {val_log_loss:.1f} nats")
+                print(f"Validation NLL: {val_log_loss:.1f} nats")
                 print(f"Validation SSE: {val_sse:.4f}")
 
                 # Save model if validation loss improved
                 if val_log_loss < self.best_val_loss:
-                    print(f"New best validation log-loss {val_log_loss:.1f}, saving model.")
+                    print(f"New best validation NLL {val_log_loss:.1f}, saving model.")
                     self.best_val_loss = val_log_loss
                     self.model.save(model_save_path)
 

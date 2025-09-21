@@ -72,6 +72,10 @@ class DeepHandwritingPredictionModel(tf.keras.Model):
         self.rnn_layers = [tf.keras.layers.RNN(cell, return_sequences=True) for cell in self.lstm_cells]
         self.mdn_layer = MixtureDensityLayer(num_mixture_components)
 
+        # loss metrics
+        self.loss_tracker = tf.keras.metrics.Mean(name="loss")
+        self.nll_tracker = tf.keras.metrics.Mean(name="nll")
+
     def call(self, inputs, training=None, mask=None):
         x = inputs
         for i, lstm_layer in enumerate(self.rnn_layers):
@@ -82,6 +86,51 @@ class DeepHandwritingPredictionModel(tf.keras.Model):
                 x = lstm_layer(combined_input)
         output = self.mdn_layer(x)
         return output
+
+    @property
+    def metrics(self):
+        return [self.loss_tracker, self.nll_tracker]
+
+    def train_step(self, data):
+        if len(data) == 2:
+            x, y = data
+            lengths = None  # Will use all sequence lengths if not provided
+        else:
+            x, y, lengths = data
+
+        with tf.GradientTape() as tape:
+            y_pred = self(x, training=True)
+            nll = mdn_loss(y, y_pred, lengths, self.num_mixture_components)
+            # Add layer regularization losses if any
+            reg = tf.add_n(self.losses) if self.losses else 0.0
+            loss = nll + reg
+
+        gradients = tape.gradient(loss, self.trainable_variables)
+        self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
+
+        # Update metrics
+        self.nll_tracker.update_state(nll)
+        self.loss_tracker.update_state(loss)
+
+        return {"loss": self.loss_tracker.result(), "nll": self.nll_tracker.result()}
+
+    def test_step(self, data):
+        """Custom test step for validation."""
+        if len(data) == 2:
+            x, y = data
+            lengths = None  # Will use all sequence lengths if not provided
+        else:
+            x, y, lengths = data
+
+        y_pred = self(x, training=False)
+        nll = mdn_loss(y, y_pred, lengths, self.num_mixture_components)
+        reg = tf.add_n(self.losses) if self.losses else 0.0
+        loss = nll + reg
+
+        self.nll_tracker.update_state(nll)
+        self.loss_tracker.update_state(loss)
+
+        return {"loss": self.loss_tracker.result(), "nll": self.nll_tracker.result()}
 
     @property
     def output_shape(self):
@@ -118,7 +167,7 @@ class DeepHandwritingSynthesisModel(tf.keras.Model):
         num_chars=ALPHABET_SIZE,
         num_attention_gaussians=NUM_ATTENTION_GAUSSIAN_COMPONENTS,
         gradient_clip_value=GRADIENT_CLIP_VALUE,
-        enable_mdn_regularization=True,
+        enable_mdn_regularization=False,
         debug=False,
         **kwargs,
     ):

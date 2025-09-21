@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 import numpy as np
 import tensorflow as tf
 
@@ -253,7 +254,7 @@ def mdn_loss(y_true, y_pred, stroke_lengths, num_components, eps=1e-6):
     # Calculate bernoulli log likelihood for end-of-stroke using logits
     eos_logit = out_eos  # rename for clarity - this is now logits, not probabilities
     bernoulli_nll = tf.nn.sigmoid_cross_entropy_with_logits(labels=eos_data, logits=eos_logit)
-    log_bernoulli = -tf.squeeze(bernoulli_nll)  # negative because our nll is -(log_mixture + log_bernoulli)
+    log_bernoulli = -tf.squeeze(bernoulli_nll, axis=2)  # Convert NLL to log likelihood
 
     # Combine log likelihoods
     total_log_likelihood = log_mixture + log_bernoulli
