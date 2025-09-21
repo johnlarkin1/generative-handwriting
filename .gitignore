@@ -12,3 +12,6 @@ archived
 **.png
 generative_handwriting/prediction_visualizations/
 handwriting-synthesis
+scribe
+prediction_frames
+prediction_visualizations

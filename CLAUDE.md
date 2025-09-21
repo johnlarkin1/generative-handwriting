@@ -75,7 +75,6 @@ poetry run python generative_handwriting/visualize_predictions.py         # Gene
 - **alphabet.py**: Handles text encoding/decoding (ASCII alphabet support)
 - **constants.py**: Global constants (model dimensions, batch size, etc.)
 - **config.py**: `HandwritingConfig` dataclass for architecture parameters
-- **training_config.py**: `TrainingConfig` dataclass for training hyperparameters
 - **model_io.py**: Model serialization and checkpoint management
 
 ### Inference & Visualization
@@ -84,7 +83,6 @@ poetry run python generative_handwriting/visualize_predictions.py         # Gene
 - **visualize.py**: Visualization utilities for model outputs
 - **visualize_predictions.py**: Generate heatmaps and GIFs of prediction distributions
 - **monitor_training.py**: Monitor training progress and test model predictions
-- **plotting.py**: Training metrics and loss visualization
 - **drawing.py**: SVG generation for vector handwriting output
 
 ### Key Design Patterns
