@@ -8,6 +8,23 @@ from scipy.interpolate import interp1d
 from scipy.signal import savgol_filter
 
 
+def align(coords):
+    """
+    corrects for global slant/offset in handwriting strokes
+    """
+    coords = np.copy(coords)
+    X, Y = coords[:, 0].reshape(-1, 1), coords[:, 1].reshape(-1, 1)
+    X = np.concatenate([np.ones([X.shape[0], 1]), X], axis=1)
+    offset, slope = np.linalg.inv(X.T.dot(X)).dot(X.T).dot(Y).squeeze()
+    theta = np.arctan(slope)
+    rotation_matrix = np.array(
+        [[np.cos(theta), -np.sin(theta)],
+         [np.sin(theta), np.cos(theta)]]
+    )
+    coords[:, :2] = np.dot(coords[:, :2], rotation_matrix) - offset
+    return coords
+
+
 def denoise(coords):
     """
     smoothing filter to mitigate some artifacts of the data collection

@@ -143,8 +143,10 @@ class Calligrapher:
         sigma2 = np.clip(sigma2, self.sigma_min, self.sigma_max)
 
         # Adjust standard deviations with stronger reduction
-        sigma1_adj = np.exp(np.log(sigma1) - bias * 2) * np.sqrt(temperature)
-        sigma2_adj = np.exp(np.log(sigma2) - bias * 2) * np.sqrt(temperature)
+        # Fix: Use sqrt(temperature) to avoid variance scaling by temperature^2
+        temp_scale = np.sqrt(temperature)
+        sigma1_adj = np.exp(np.log(sigma1) - bias * 2) * temp_scale
+        sigma2_adj = np.exp(np.log(sigma2) - bias * 2) * temp_scale
 
         # Ensure adjusted sigmas stay within bounds
         sigma1_adj = np.clip(sigma1_adj, self.sigma_min, self.sigma_max)

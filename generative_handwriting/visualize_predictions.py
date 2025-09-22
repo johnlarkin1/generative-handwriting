@@ -49,8 +49,10 @@ def sample_from_mdn_output(
     # Get parameters for selected component
     mx = mu_x[component]
     my = mu_y[component]
-    sx = sigma_x[component] * temperature
-    sy = sigma_y[component] * temperature
+    # Fix: Use sqrt(temperature) for sigma scaling to avoid variance scaling by temperature^2
+    temp_scale = np.sqrt(temperature)
+    sx = sigma_x[component] * temp_scale
+    sy = sigma_y[component] * temp_scale
     r = rho[component]
 
     # Sample from 2D Gaussian
@@ -71,11 +73,13 @@ def compute_probability_grid(
     grid_size: int = 200,
     grid_range: float = 10.0,
     use_weights: bool = True,
+    top_components_only: int = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Compute probability density on a 2D grid from MDN parameters.
 
     Args:
         use_weights: If True, weight each component by pi. If False, show unweighted distributions.
+        top_components_only: If specified, only use the top N components by weight.
     """
     # Create grid
     x = np.linspace(-grid_range, grid_range, grid_size)
@@ -86,9 +90,25 @@ def compute_probability_grid(
     # Initialize probability grid
     prob_grid = np.zeros((grid_size, grid_size))
 
-    # Sum contributions from all mixture components
-    for i in range(len(pi)):
-        if use_weights and pi[i] < 1e-5:  # Skip components with very low weight only if weighting
+    # Filter to top components if requested
+    if top_components_only is not None:
+        top_indices = np.argsort(pi)[-top_components_only:][::-1]  # Top N by weight
+        component_indices = top_indices
+        # Debug: log which components are being used
+        # if len(pi) > 18:
+        #     print(f"   Debug heatmap: Top {top_components_only} components: {top_indices}")
+        #     print(f"   Debug heatmap: Their weights: {[f'{pi[i]:.4f}' for i in top_indices]}")
+        #     print(
+        #         f"   Debug heatmap: Component 18 weight: {pi[18]:.4f}, in top {top_components_only}? {18 in top_indices}"
+        #     )
+    else:
+        component_indices = range(len(pi))
+
+    # Sum contributions from selected mixture components
+    for i in component_indices:
+        # Don't skip small components - we want to see all of them
+        # Only skip if truly zero to avoid numerical issues
+        if pi[i] < 1e-10:  # Much lower threshold to show weak components
             continue
 
         mean = [mu_x[i], mu_y[i]]
@@ -99,11 +119,32 @@ def compute_probability_grid(
 
         try:
             rv = multivariate_normal(mean, cov)
-            # Apply weighting or not based on parameter
-            weight = pi[i] if use_weights else (1.0 if pi[i] > 0.01 else 0.0)  # Only show components with some minimal activation
-            prob_grid += weight * rv.pdf(pos)
-        except:
+            # Apply weighting based on parameter
+            if use_weights:
+                weight = pi[i]
+            else:
+                # For unweighted view, show all components equally
+                # Use soft ramp to show weak modes while emphasizing stronger ones
+                weight = 1.0 if pi[i] > 1e-4 else np.sqrt(pi[i] * 1e4)  # Soft ramp for very weak components
+
+            pdf_vals = rv.pdf(pos)
+            contribution = weight * pdf_vals
+            prob_grid += contribution
+
+            # Debug logging for Component 18
+            if i == 18 and pi[i] > 0.5:
+                print("   Debug Component 18 grid computation:")
+                print(f"     Mean: {mean}")
+                print(f"     Cov determinant: {np.linalg.det(cov):.2e}")
+                print(f"     PDF max: {np.max(pdf_vals):.2e}, min: {np.min(pdf_vals):.2e}")
+                print(f"     Contribution max: {np.max(contribution):.2e}")
+                print(f"     Grid range: {grid_range}, grid center will be at current pos")
+
+        except Exception as e:
             # Handle singular matrix cases
+            if i == 18 and pi[i] > 0.5:
+                print(f"   Debug Component 18 FAILED: {e}")
+                print(f"     Cov matrix: {cov}")
             continue
 
     return X, Y, prob_grid
@@ -182,11 +223,7 @@ def create_cumulative_heatmap(
 
         # Create interpolator for the local grid
         interpolator = RegularGridInterpolator(
-            (y_local_global, x_local_global),
-            prob_grid,
-            method='linear',
-            bounds_error=False,
-            fill_value=0.0
+            (y_local_global, x_local_global), prob_grid, method="linear", bounds_error=False, fill_value=0.0
         )
 
         # Sample the local grid at global grid points
@@ -201,12 +238,7 @@ def create_cumulative_heatmap(
 
     # Top plot: Cumulative probability heatmap
     im1 = ax1.imshow(
-        cumulative_grid,
-        extent=[min_x, max_x, min_y, max_y],
-        origin='lower',
-        cmap='hot',
-        alpha=0.8,
-        aspect='equal'
+        cumulative_grid, extent=[min_x, max_x, min_y, max_y], origin="lower", cmap="hot", alpha=0.8, aspect="equal"
     )
 
     # Overlay the actual handwriting trajectory
@@ -216,26 +248,26 @@ def create_cumulative_heatmap(
 
     for end_idx in stroke_ends:
         if end_idx >= start_idx and end_idx < len(stroke_sequence):
-            stroke_segment = stroke_sequence[start_idx:end_idx + 1]
+            stroke_segment = stroke_sequence[start_idx : end_idx + 1]
             if len(stroke_segment) > 1:
-                ax1.plot(stroke_segment[:, 0], stroke_segment[:, 1], 'cyan', linewidth=2, alpha=0.9)
+                ax1.plot(stroke_segment[:, 0], stroke_segment[:, 1], "cyan", linewidth=2, alpha=0.9)
             start_idx = end_idx + 1
 
     # Handle final segment if no pen-up at end
     if start_idx < len(stroke_sequence):
         stroke_segment = stroke_sequence[start_idx:]
         if len(stroke_segment) > 1:
-            ax1.plot(stroke_segment[:, 0], stroke_segment[:, 1], 'cyan', linewidth=2, alpha=0.9)
+            ax1.plot(stroke_segment[:, 0], stroke_segment[:, 1], "cyan", linewidth=2, alpha=0.9)
 
     # Don't show prediction position markers - just show pure probability distributions
     # pred_x = [pos[0] for pos in positions]
     # pred_y = [pos[1] for pos in positions]
     # ax1.scatter(pred_x, pred_y, c='white', s=20, alpha=0.7, edgecolors='black', linewidth=0.5)
 
-    ax1.set_xlabel('X coordinate')
-    ax1.set_ylabel('Y coordinate')
-    ax1.set_title('Cumulative Probability Density Heatmap (Figure 10 Style)')
-    plt.colorbar(im1, ax=ax1, label='Cumulative Probability Density', shrink=0.8)
+    ax1.set_xlabel("X coordinate")
+    ax1.set_ylabel("Y coordinate")
+    ax1.set_title("Cumulative Probability Density Heatmap (Figure 10 Style)")
+    plt.colorbar(im1, ax=ax1, label="Cumulative Probability Density", shrink=0.8)
 
     # Bottom plot: Component activations over time (like the original bottom plot)
     # This recreates the mixture component timeline from our existing data
@@ -247,19 +279,19 @@ def create_cumulative_heatmap(
     trajectory_y = [pos[1] for pos in positions]
 
     # Create a 2D representation showing x and y over time
-    ax2.plot(time_steps, trajectory_x, 'b-', label='X coordinate', alpha=0.7)
-    ax2.plot(time_steps, trajectory_y, 'r-', label='Y coordinate', alpha=0.7)
-    ax2.set_xlabel('Time Step')
-    ax2.set_ylabel('Coordinate Value')
-    ax2.set_title('Trajectory Coordinates Over Time')
+    ax2.plot(time_steps, trajectory_x, "b-", label="X coordinate", alpha=0.7)
+    ax2.plot(time_steps, trajectory_y, "r-", label="Y coordinate", alpha=0.7)
+    ax2.set_xlabel("Time Step")
+    ax2.set_ylabel("Coordinate Value")
+    ax2.set_title("Trajectory Coordinates Over Time")
     ax2.legend()
     ax2.grid(True, alpha=0.3)
 
-    plt.suptitle('Handwriting Prediction: Cumulative Probability Analysis', fontsize=16, fontweight='bold')
+    plt.suptitle("Handwriting Prediction: Cumulative Probability Analysis", fontsize=16, fontweight="bold")
     plt.tight_layout()
 
     # Save the figure
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close()
 
     print(f"✅ Cumulative heatmap saved to {save_path}")
@@ -292,10 +324,10 @@ def visualize_prediction_sequence(
 
     # Track cumulative probability distributions for Figure 10-style visualization
     cumulative_prob_grids = []  # Will store probability grids for each timestep
-    cumulative_positions = []   # Will store the positions where predictions were made
+    cumulative_positions = []  # Will store the positions where predictions were made
 
     # Get sequence length
-    seq_len = min(len(stroke_sequence), 400)  # Limit to 400 points for visualization
+    seq_len = min(len(stroke_sequence), 200)  # Limit to 400 points for visualization
 
     print(f"Generating prediction visualizations for {seq_len} steps...")
 
@@ -323,6 +355,42 @@ def visualize_prediction_sequence(
 
         # Store component activations for time plot
         component_activations.append(params["pi"].copy())
+
+        # Log component usage statistics every 20 steps for debugging
+        if t % 20 == 0:
+            alive_count = (params["pi"] > 1e-6).sum()
+            max_component = np.argmax(params["pi"])
+            # print(
+            #     f"Step {t}: {alive_count}/20 alive components, "
+            #     f"max component #{max_component} (weight: {params['pi'][max_component]:.4f}), "
+            #     f"Component 0: {params['pi'][0]:.6f}, "
+            #     f"Component 18: {params['pi'][18] if len(params['pi']) > 18 else 'N/A'}"
+            # )
+
+        # Log Component 18 parameters when it's highly active (EOS specialist)
+        if len(params["pi"]) > 18 and params["pi"][18] > 0.5:
+            distance_from_current = (
+                (params["mu_x"][18] + stroke_sequence[t - 1, 0] - stroke_sequence[t - 1, 0]) ** 2
+                + (params["mu_y"][18] + stroke_sequence[t - 1, 1] - stroke_sequence[t - 1, 1]) ** 2
+            ) ** 0.5
+            predicted_pos = (
+                params["mu_x"][18] + stroke_sequence[t - 1, 0],
+                params["mu_y"][18] + stroke_sequence[t - 1, 1],
+            )
+
+            # Show top 5 components for context
+            top_5_indices = np.argsort(params["pi"])[-5:][::-1]
+            top_5_weights = [params["pi"][i] for i in top_5_indices]
+
+            print(f"🔥 COMPONENT 18 ACTIVE at step {t} (weight: {params['pi'][18]:.4f}):")
+            print(f"   Top 5 components: {list(zip(top_5_indices, [f'{w:.4f}' for w in top_5_weights]))}")
+            print(f"   μ = ({params['mu_x'][18]:.2f}, {params['mu_y'][18]:.2f}) [relative to current]")
+            print(f"   Predicted position: ({predicted_pos[0]:.2f}, {predicted_pos[1]:.2f}) [absolute]")
+            print(f"   σ = ({params['sigma_x'][18]:.2f}, {params['sigma_y'][18]:.2f})")
+            print(f"   ρ = {params['rho'][18]:.3f}")
+            print(f"   EOS = {params['eos'][0]:.3f}")
+            print(f"   Current pos: ({stroke_sequence[t - 1, 0]:.2f}, {stroke_sequence[t - 1, 1]:.2f})")
+            print(f"   Jump distance: {np.sqrt(params['mu_x'][18] ** 2 + params['mu_y'][18] ** 2):.2f}")
 
         # Store cumulative probability information for Figure 10-style visualization
         if generate_cumulative_heatmap:
@@ -384,9 +452,16 @@ def visualize_prediction_sequence(
             stroke_sequence[t - 1, 0], stroke_sequence[t - 1, 1], color="red", s=100, zorder=5, label="Current position"
         )
 
-        # Draw ellipses for ALL mixture components with significant weight
-        active_components = np.where(params["pi"] > 0.005)[0]  # Show all components > 0.5%
+        # Draw ellipses for ALL mixture components with any weight
+        # Lower threshold to see weak components
+        active_components = np.where(params["pi"] > 1e-6)[0]  # Show components > 0.0001%
         colors = plt.cm.viridis(np.linspace(0, 1, len(active_components)))
+
+        # Log component usage for debugging
+        # alive_count = (params["pi"] > 1e-6).sum()
+        # # print(
+        # #     f"Step {t}: {alive_count} alive components, Component 18 weight: {params['pi'][18] if len(params['pi']) > 18 else 'N/A'}"
+        # # )
 
         for i, idx in enumerate(active_components):
             # Calculate ellipse parameters
@@ -438,24 +513,37 @@ def visualize_prediction_sequence(
         ax1.set_ylim(curr_y - trajectory_range, curr_y + trajectory_range)
         ax1.grid(True, alpha=0.3)
 
-        # Plot 2: Enhanced probability heatmap with ZOOMED IN view for spike visibility
+        # Plot 2: Enhanced probability heatmap - show only dominant component
+        # Adaptive grid size based on the dominant component's variance
+        dominant_component = np.argmax(params["pi"])
+        max_sigma = max(params["sigma_x"][dominant_component], params["sigma_y"][dominant_component])
+        grid_range = min(15.0, max(5.0, max_sigma * 3))  # 3 standard deviations, capped at 15
+
+        # Create single-component parameters
+        single_pi = np.zeros_like(params["pi"])
+        single_pi[dominant_component] = 1.0  # Give 100% weight to dominant component
+
         X, Y, prob_grid = compute_probability_grid(
-            params["pi"],
+            single_pi,  # Only the dominant component
             params["mu_x"],
             params["mu_y"],
             params["sigma_x"],
             params["sigma_y"],
             params["rho"],
             grid_size=200,  # Higher resolution for better detail
-            grid_range=3.0,  # Much tighter view to see probability peaks clearly
+            grid_range=grid_range,  # Large range to capture Component 18
+            top_components_only=1,  # Only show the single dominant component
         )
 
         # Shift grid to current position
         X += stroke_sequence[t - 1, 0]
         Y += stroke_sequence[t - 1, 1]
 
-        # Plot heatmap with more levels for better detail
+        # Plot clean probability heatmap for the dominant component
         im = ax2.contourf(X, Y, prob_grid, levels=50, cmap="hot", alpha=0.8)
+
+        # Add title showing which component is being visualized
+        component_title = f"Component #{dominant_component} (weight: {params['pi'][dominant_component]:.3f})"
 
         # Plot trajectory with pen-up/pen-down handling
         past_coords = stroke_sequence[:t]
@@ -491,40 +579,14 @@ def visualize_prediction_sequence(
                 stroke_sequence[t, 0], stroke_sequence[t, 1], color="lime", s=100, marker="x", zorder=5, linewidth=3
             )
 
-        # Add centers of top Gaussian components
-        top_5 = np.argsort(params["pi"])[-5:][::-1]
-        for i, idx in enumerate(top_5):
-            if params["pi"][idx] > 0.01:
-                center_x = params["mu_x"][idx] + stroke_sequence[t - 1, 0]
-                center_y = params["mu_y"][idx] + stroke_sequence[t - 1, 1]
-                ax2.scatter(
-                    center_x,
-                    center_y,
-                    color="white",
-                    s=100,
-                    marker="o",
-                    zorder=6,
-                    edgecolor="black",
-                    linewidth=2,
-                    alpha=0.9,
-                )
-                ax2.text(
-                    center_x,
-                    center_y,
-                    f"{idx}",
-                    fontsize=10,
-                    ha="center",
-                    va="center",
-                    color="black",
-                    fontweight="bold",
-                )
+        # Don't mark the component center - keep heatmap clean
 
         ax2.set_xlabel("X coordinate")
         ax2.set_ylabel("Y coordinate")
-        ax2.set_title(f"Probability Density Heatmap (EOS: {params['eos'][0]:.3f})")
+        ax2.set_title(f"{component_title} (EOS: {params['eos'][0]:.3f})")
 
-        # Set matching axis limits for consistency - using tighter zoom for heatmap
-        heatmap_range = 3  # Match the grid_range for proper zooming
+        # Set matching axis limits for consistency - adaptive zoom for heatmap
+        heatmap_range = grid_range  # Match the adaptive grid_range
         ax2.set_xlim(curr_x - heatmap_range, curr_x + heatmap_range)
         ax2.set_ylim(curr_y - heatmap_range, curr_y + heatmap_range)
         plt.colorbar(im, ax=ax2, label="Probability Density", shrink=0.8)
@@ -667,20 +729,24 @@ def visualize_prediction_sequence(
         ax4.grid(True, alpha=0.3)
 
         # ======= Plot 5: Zoomed-out Probability Heatmap =======
+        # Use larger range for zoomed-out view but not excessive
+        large_grid_range = min(25.0, max(10.0, max_sigma * 4))  # 4 standard deviations, capped at 25
+        # Use the same single dominant component for zoomed out view
         X_out, Y_out, prob_grid_out = compute_probability_grid(
-            params["pi"],
+            single_pi,  # Only the dominant component
             params["mu_x"],
             params["mu_y"],
             params["sigma_x"],
             params["sigma_y"],
             params["rho"],
             grid_size=150,
-            grid_range=10.0,  # Larger view
+            grid_range=large_grid_range,  # Much larger view to see extreme components
+            top_components_only=1,  # Only show the single dominant component
         )
         X_out += stroke_sequence[t - 1, 0]
         Y_out += stroke_sequence[t - 1, 1]
 
-        # Plot heatmap
+        # Plot clean heatmap for the dominant component
         im_out = ax5.contourf(X_out, Y_out, prob_grid_out, levels=30, cmap="hot", alpha=0.8)
 
         # Plot trajectory
@@ -714,8 +780,9 @@ def visualize_prediction_sequence(
         ax5.set_xlabel("X coordinate")
         ax5.set_ylabel("Y coordinate")
         ax5.set_title("Probability Heatmap (Zoomed Out)")
-        ax5.set_xlim(curr_x - zoomed_out_range, curr_x + zoomed_out_range)
-        ax5.set_ylim(curr_y - zoomed_out_range, curr_y + zoomed_out_range)
+        # Use the adaptive large grid range for axis limits too
+        ax5.set_xlim(curr_x - large_grid_range, curr_x + large_grid_range)
+        ax5.set_ylim(curr_y - large_grid_range, curr_y + large_grid_range)
         plt.colorbar(im_out, ax=ax5, label="Probability Density", shrink=0.8)
 
         # ======= Plot 6: Mixture Component Activations Over Time =======
@@ -828,7 +895,7 @@ def visualize_prediction_sequence(
             cumulative_prob_grids,
             cumulative_positions,
             stroke_sequence,
-            save_path.replace(".gif", "_cumulative_heatmap.png")
+            save_path.replace(".gif", "_cumulative_heatmap.png"),
         )
 
     # Create GIF
@@ -935,7 +1002,7 @@ def main():
         num_components=20,
         grid_size=80,
         fps=2,
-        generate_cumulative_heatmap=True
+        generate_cumulative_heatmap=True,
     )
 
     # Also create a static visualization of a single prediction

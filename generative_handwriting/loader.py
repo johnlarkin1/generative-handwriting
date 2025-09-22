@@ -35,6 +35,7 @@ class HandwritingDataLoader:
         space_threshold: int = STROKE_SPACE_THRESHOLD,
         data_dir: str = "data/lineStrokes",
         ascii_dir: str = "data/ascii",
+        blacklist_path: Optional[str] = None,
     ) -> None:
         """
         Args:
@@ -48,6 +49,17 @@ class HandwritingDataLoader:
         self.ascii_dir = ascii_dir
 
         self.curr_dir = os.path.dirname(os.path.realpath(__file__))
+
+        # Load blacklist if provided
+        self.blacklist = set()
+        if blacklist_path:
+            try:
+                blacklist_array = np.load(blacklist_path, allow_pickle=True)
+                self.blacklist = set(blacklist_array)
+                print(f"Loaded blacklist with {len(self.blacklist)} entries")
+            except FileNotFoundError:
+                print(f"Warning: Blacklist file not found at {blacklist_path}")
+
         for name in ["train", "valid1", "valid2", "test"]:
             file_path = os.path.join(self.curr_dir, "data", f"{name}_set.txt")
             with open(file_path, "r") as file:
@@ -112,6 +124,12 @@ class HandwritingDataLoader:
             for file_name in filter(lambda f: f.endswith(".xml"), files):
                 if "z01-000z" in file_name:
                     continue
+
+                # Check blacklist
+                if file_name in self.blacklist:
+                    print(f"Skipping blacklisted file: {file_name}")
+                    continue
+
                 if filename_set:
                     file_name_without_extension = os.path.splitext(file_name)[0]
                     parts = file_name_without_extension.split("-")
@@ -221,11 +239,17 @@ class HandwritingDataLoader:
                     )
             coords = np.array(coords)
 
-            # coords = drawing.align(coords)
+            coords = drawing.align(coords)
             coords = drawing.denoise(coords)
             offsets = drawing.coords_to_offsets(coords)
             offsets = offsets[:MAX_STROKE_LEN]
             offsets = drawing.normalize(offsets)
+
+            # Quality filtering: check for extreme coordinate values
+            if np.any(np.linalg.norm(offsets[:, :2], axis=1) > 60):
+                print(f"Filtering out {filename} due to extreme coordinate values")
+                return np.zeros((0, 3), dtype=np.float32), 0
+
             return offsets, len(offsets)
         except ET.ParseError as e:
             print(f"Error parsing XML file: {filename}")
@@ -380,7 +404,9 @@ class HandwritingDataLoader:
 
 
 if __name__ == "__main__":
-    loader = HandwritingDataLoader()
+    loader = HandwritingDataLoader(
+        blacklist_path="generative_handwriting/data/blacklist.npy"
+    )
     loader.load_and_save_data()
     loader.prepare_data()
     # loader._parse_transcription(
