@@ -1,11 +1,13 @@
+import json
 import os
 import sys
 import time
-import json
+from datetime import datetime
+
+import matplotlib
 import numpy as np
 import tensorflow as tf
-from datetime import datetime
-import matplotlib
+
 matplotlib.use('Agg')  # Use non-interactive backend for remote servers
 import matplotlib.pyplot as plt
 from loader import HandwritingDataLoader
@@ -206,7 +208,7 @@ def main():
         test_results = quick_test_model(model_path, data_loader)
 
         if test_results:
-            print(f"✅ Model loaded successfully")
+            print("✅ Model loaded successfully")
             print(f"📈 Output shape: {test_results['prediction_shape']}")
             print(f"🎯 Max mixture weight: {test_results['max_mixture_weight']:.4f}")
             print(f"📊 Active components: {test_results['active_components']}/20")

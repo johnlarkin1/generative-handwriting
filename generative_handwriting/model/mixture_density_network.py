@@ -98,31 +98,16 @@ class MixtureDensityLayer(tf.keras.layers.Layer):
         )
         # Bias for end-of-stroke probability
         self.b_eos = self.add_weight(
-            name=f"{self.mod_name}_b_eos", shape=(1,), initializer=tf.keras.initializers.Constant(-2.0), trainable=True
+            name=f"{self.mod_name}_b_eos",
+            shape=(1,),
+            initializer=tf.keras.initializers.Constant(-1.0),
+            trainable=True,
         )
         super().build(input_shape)
 
-    def _compute_regularization(self, pi, sigma, rho):
-        """Add configurable regularization to prevent degenerate solutions.
-        Note: These regularization terms were not in Graves (2013) original paper.
-        """
-        if not self.enable_regularization:
-            return tf.constant(0.0)
-
-        # L2 regularization on sigmas to prevent them from getting too large
-        sigma_reg = self.sigma_reg_weight * tf.reduce_mean(tf.square(tf.math.log(sigma)))
-
-        # Regularization to encourage diverse mixture components (can hurt model confidence)
-        pi_entropy = -tf.reduce_mean(tf.reduce_sum(pi * tf.math.log(pi + 1e-6), axis=-1))
-
-        # Correlation regularization to prevent components from becoming too correlated
-        rho_reg = self.rho_reg_weight * tf.reduce_mean(tf.square(rho))
-
-        return sigma_reg - self.entropy_reg_weight * pi_entropy + rho_reg
-
     def call(self, inputs, training=None):
         sigma_eps = 1e-2  # Increased from 1e-3 for better stability
-        sigma_max = 100.0  # Add upper bound to prevent extreme values
+        sigma_max = 1e5  # Add upper bound to prevent extreme values
         temperature = 1.0 if not training else self.temperature
 
         pi_logits = tf.matmul(inputs, self.W_pi) + self.b_pi
@@ -132,17 +117,13 @@ class MixtureDensityLayer(tf.keras.layers.Layer):
         mu1, mu2 = tf.split(mu, num_or_size_splits=2, axis=2)
 
         log_sigma = tf.matmul(inputs, self.W_sigma) + self.b_sigma
-        # Clip log_sigma to prevent extreme values
-        log_sigma = tf.clip_by_value(log_sigma, -10.0, 10.0)
+        log_sigma = tf.clip_by_value(log_sigma, -1e5, 1e5)
         sigma = tf.exp(log_sigma)
         sigmas = tf.clip_by_value(sigma, sigma_eps, sigma_max)
         sigma1, sigma2 = tf.split(sigmas, num_or_size_splits=2, axis=2)
 
         rho_raw = tf.matmul(inputs, self.W_rho) + self.b_rho
-        rho = tf.tanh(rho_raw) * 0.95  # More conservative to prevent numerical issues
-
-        reg_loss = self._compute_regularization(pi, sigma, rho)
-        self.add_loss(reg_loss)
+        rho = tf.tanh(rho_raw)
 
         eos_logit = tf.matmul(inputs, self.W_eos) + self.b_eos
         eos = tf.reshape(eos_logit, [-1, inputs.shape[1], 1])
@@ -195,85 +176,57 @@ def mdn_loss(y_true, y_pred, stroke_lengths, num_components, eps=1e-6):
     Returns:
         Masked negative log-likelihood loss
     """
-    # Split the predictions
     out_pi, out_mu1, out_mu2, out_sigma1, out_sigma2, out_rho, out_eos = tf.split(
         y_pred,
         [num_components] * NUM_MIXTURE_COMPONENTS_PER_COMPONENT + [1],
         axis=2,
     )
 
-    # Split the targets
     x_data, y_data, eos_data = tf.split(y_true, [1, 1, 1], axis=-1)
 
-    # Ensure sigma values are properly bounded
-    out_sigma1 = tf.clip_by_value(out_sigma1, 1e-2, 100.0)
-    out_sigma2 = tf.clip_by_value(out_sigma2, 1e-2, 100.0)
-
-    # Ensure rho is properly bounded to avoid numerical issues
-    out_rho = tf.clip_by_value(out_rho, -0.95, 0.95)
-
-    # Ensure pi values are properly normalized and bounded
+    out_sigma1 = tf.clip_by_value(out_sigma1, 1e-5, 1e5)
+    out_sigma2 = tf.clip_by_value(out_sigma2, 1e-5, 1e5)
+    out_rho = tf.clip_by_value(out_rho, -0.99, 0.99)
     out_pi = tf.clip_by_value(out_pi, eps, 1.0 - eps)
     out_pi = out_pi / tf.reduce_sum(out_pi, axis=-1, keepdims=True)
 
-    # Calculate log probabilities for the bivariate normal distribution
-    # Log of normalization constant with safer log operations
-    # Use tf.constant with proper dtype to avoid float64/float32 mismatch
-    pi_const = tf.constant(2 * np.pi, dtype=out_sigma1.dtype)
-    log_norm = -tf.math.log(pi_const) - tf.math.log(out_sigma1) - tf.math.log(out_sigma2)
+    # basically part of eq 24
+    norm = 1.0 / (2 * np.pi * out_sigma1 * out_sigma2 * tf.sqrt(1 - tf.square(out_rho)))
+    z_1 = (x_data - out_mu1) / out_sigma1
+    z_2 = (y_data - out_mu2) / out_sigma2
 
-    # Handle correlation term in log space with bounds check
-    rho_squared = tf.square(out_rho)
-    rho_term = tf.math.log(tf.maximum(1.0 - rho_squared, eps))
-    log_norm = log_norm - 0.5 * rho_term
+    # eq 25
+    Z = tf.square(z_1) + tf.square(z_2) - 2 * out_rho * z_1 * z_2
+    exp_term = -0.5 * Z / (1 - tf.square(out_rho))
 
-    # Calculate Z-score terms with clipping to prevent extreme values
-    z_1 = tf.clip_by_value((x_data - out_mu1) / out_sigma1, -10.0, 10.0)
-    z_2 = tf.clip_by_value((y_data - out_mu2) / out_sigma2, -10.0, 10.0)
-    z_12 = z_1 * z_2
+    # prob space
+    gaussian_likelihoods = tf.exp(exp_term) * norm
+    gmm_likelihood = tf.reduce_sum(out_pi * gaussian_likelihoods, axis=2)
+    gmm_likelihood = tf.clip_by_value(gmm_likelihood, eps, np.inf)
 
-    # Calculate exponent term in log space with protection against division by small values
-    denominator = tf.maximum(1.0 - rho_squared, eps)
-    exponent = -0.5 / denominator * (tf.square(z_1) + tf.square(z_2) - 2 * out_rho * z_12)
-
-    # Clip exponent to prevent overflow/underflow
-    exponent = tf.clip_by_value(exponent, -50.0, 50.0)
-
-    # Complete log probability for each component
-    log_probs = log_norm + exponent
-
-    # Calculate log mixture probabilities using log-sum-exp trick
-    log_pi = tf.math.log(out_pi)
-    weighted_log_probs = log_pi + log_probs
-
-    # Use stable log-sum-exp
-    max_weighted = tf.reduce_max(weighted_log_probs, axis=2, keepdims=True)
-    log_mixture = max_weighted + tf.math.log(
-        tf.reduce_sum(tf.exp(weighted_log_probs - max_weighted), axis=2, keepdims=True)
+    # bernoulli likelihood for eos
+    es_prob = tf.sigmoid(out_eos)
+    bernoulli_likelihood = tf.squeeze(
+        tf.where(tf.equal(tf.ones_like(eos_data), eos_data), es_prob, 1 - es_prob), axis=2
     )
-    log_mixture = tf.squeeze(log_mixture, axis=2)
+    bernoulli_likelihood = tf.clip_by_value(bernoulli_likelihood, eps, 1.0 - eps)
 
-    # Calculate bernoulli log likelihood for end-of-stroke using logits
-    eos_logit = out_eos  # rename for clarity - this is now logits, not probabilities
-    bernoulli_nll = tf.nn.sigmoid_cross_entropy_with_logits(labels=eos_data, logits=eos_logit)
-    log_bernoulli = -tf.squeeze(bernoulli_nll, axis=2)  # Convert NLL to log likelihood
-
-    # Combine log likelihoods
-    total_log_likelihood = log_mixture + log_bernoulli
-
-    # Check for NaN/Inf and replace with large finite value
-    total_log_likelihood = tf.where(
-        tf.logical_or(tf.math.is_nan(total_log_likelihood), tf.math.is_inf(total_log_likelihood)),
-        tf.constant(-50.0, dtype=total_log_likelihood.dtype),
-        total_log_likelihood,
+    nll = -(tf.math.log(gmm_likelihood) + tf.math.log(bernoulli_likelihood))
+    # just in case
+    nll = tf.where(
+        tf.logical_or(tf.math.is_nan(nll), tf.math.is_inf(nll)),
+        tf.constant(50.0, dtype=nll.dtype),  # Large positive value for NLL
+        nll,
     )
-
-    nll = -total_log_likelihood
 
     # Apply masking if stroke lengths are provided
     if stroke_lengths is not None:
         max_len = tf.shape(y_true)[1]
         mask = tf.sequence_mask(stroke_lengths, maxlen=max_len, dtype=tf.float32)
+
+        # Additional safety: also mask NaN values
+        mask = tf.logical_and(tf.cast(mask, tf.bool), tf.logical_not(tf.math.is_nan(nll)))
+        mask = tf.cast(mask, tf.float32)
 
         # Mask the negative log-likelihood
         masked_nll = nll * mask

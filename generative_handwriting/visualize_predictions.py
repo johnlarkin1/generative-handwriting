@@ -10,6 +10,7 @@ from loader import HandwritingDataLoader
 from matplotlib.patches import Ellipse
 from model.handwriting_models import DeepHandwritingPredictionModel
 from model.mixture_density_network import MixtureDensityLayer, mdn_loss
+from scipy.interpolate import RegularGridInterpolator
 from scipy.stats import multivariate_normal
 
 
@@ -69,8 +70,13 @@ def compute_probability_grid(
     rho: np.ndarray,
     grid_size: int = 200,
     grid_range: float = 10.0,
+    use_weights: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Compute probability density on a 2D grid from MDN parameters."""
+    """Compute probability density on a 2D grid from MDN parameters.
+
+    Args:
+        use_weights: If True, weight each component by pi. If False, show unweighted distributions.
+    """
     # Create grid
     x = np.linspace(-grid_range, grid_range, grid_size)
     y = np.linspace(-grid_range, grid_range, grid_size)
@@ -82,7 +88,7 @@ def compute_probability_grid(
 
     # Sum contributions from all mixture components
     for i in range(len(pi)):
-        if pi[i] < 1e-5:  # Skip components with very low weight
+        if use_weights and pi[i] < 1e-5:  # Skip components with very low weight only if weighting
             continue
 
         mean = [mu_x[i], mu_y[i]]
@@ -93,7 +99,9 @@ def compute_probability_grid(
 
         try:
             rv = multivariate_normal(mean, cov)
-            prob_grid += pi[i] * rv.pdf(pos)
+            # Apply weighting or not based on parameter
+            weight = pi[i] if use_weights else (1.0 if pi[i] > 0.01 else 0.0)  # Only show components with some minimal activation
+            prob_grid += weight * rv.pdf(pos)
         except:
             # Handle singular matrix cases
             continue
@@ -130,6 +138,133 @@ def extract_mdn_parameters(mdn_output: tf.Tensor, num_components: int = 20) -> d
     }
 
 
+def create_cumulative_heatmap(
+    prob_grids: list,
+    positions: list,
+    stroke_sequence: np.ndarray,
+    save_path: str,
+    grid_range: float = 15.0,
+):
+    """Create a cumulative heatmap showing overlaid probability distributions like Figure 10."""
+    print(f"Creating cumulative heatmap with {len(prob_grids)} probability distributions...")
+
+    # Determine the global bounds for the heatmap
+    all_x = [pos[0] for pos in positions]
+    all_y = [pos[1] for pos in positions]
+
+    # Add some padding around the trajectory
+    min_x, max_x = min(all_x) - grid_range, max(all_x) + grid_range
+    min_y, max_y = min(all_y) - grid_range, max(all_y) + grid_range
+
+    # Create a high-resolution global grid
+    grid_size = 300
+    x_global = np.linspace(min_x, max_x, grid_size)
+    y_global = np.linspace(min_y, max_y, grid_size)
+    X_global, Y_global = np.meshgrid(x_global, y_global)
+
+    # Initialize cumulative probability grid
+    cumulative_grid = np.zeros((grid_size, grid_size))
+
+    # For each timestep, add its probability distribution to the cumulative grid
+    local_grid_size = len(prob_grids[0])  # Assuming all grids have same size
+    local_range = grid_range
+
+    for i, (prob_grid, pos) in enumerate(zip(prob_grids, positions)):
+        # Create local coordinate grid for this timestep
+        x_local = np.linspace(-local_range, local_range, local_grid_size)
+        y_local = np.linspace(-local_range, local_range, local_grid_size)
+
+        # Convert local coordinates to global coordinates
+        x_local_global = x_local + pos[0]
+        y_local_global = y_local + pos[1]
+
+        # Interpolate the local probability grid onto the global grid
+
+        # Create interpolator for the local grid
+        interpolator = RegularGridInterpolator(
+            (y_local_global, x_local_global),
+            prob_grid,
+            method='linear',
+            bounds_error=False,
+            fill_value=0.0
+        )
+
+        # Sample the local grid at global grid points
+        points = np.column_stack([Y_global.ravel(), X_global.ravel()])
+        interpolated_values = interpolator(points).reshape(grid_size, grid_size)
+
+        # Add to cumulative grid
+        cumulative_grid += interpolated_values
+
+    # Create the visualization
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 12))
+
+    # Top plot: Cumulative probability heatmap
+    im1 = ax1.imshow(
+        cumulative_grid,
+        extent=[min_x, max_x, min_y, max_y],
+        origin='lower',
+        cmap='hot',
+        alpha=0.8,
+        aspect='equal'
+    )
+
+    # Overlay the actual handwriting trajectory
+    # Handle pen-up/pen-down by splitting strokes
+    stroke_ends = np.where(stroke_sequence[:, 2] == 1)[0]
+    start_idx = 0
+
+    for end_idx in stroke_ends:
+        if end_idx >= start_idx and end_idx < len(stroke_sequence):
+            stroke_segment = stroke_sequence[start_idx:end_idx + 1]
+            if len(stroke_segment) > 1:
+                ax1.plot(stroke_segment[:, 0], stroke_segment[:, 1], 'cyan', linewidth=2, alpha=0.9)
+            start_idx = end_idx + 1
+
+    # Handle final segment if no pen-up at end
+    if start_idx < len(stroke_sequence):
+        stroke_segment = stroke_sequence[start_idx:]
+        if len(stroke_segment) > 1:
+            ax1.plot(stroke_segment[:, 0], stroke_segment[:, 1], 'cyan', linewidth=2, alpha=0.9)
+
+    # Don't show prediction position markers - just show pure probability distributions
+    # pred_x = [pos[0] for pos in positions]
+    # pred_y = [pos[1] for pos in positions]
+    # ax1.scatter(pred_x, pred_y, c='white', s=20, alpha=0.7, edgecolors='black', linewidth=0.5)
+
+    ax1.set_xlabel('X coordinate')
+    ax1.set_ylabel('Y coordinate')
+    ax1.set_title('Cumulative Probability Density Heatmap (Figure 10 Style)')
+    plt.colorbar(im1, ax=ax1, label='Cumulative Probability Density', shrink=0.8)
+
+    # Bottom plot: Component activations over time (like the original bottom plot)
+    # This recreates the mixture component timeline from our existing data
+    # We'll need to track component activations during the main loop for this
+
+    # For now, create a placeholder showing the trajectory timeline
+    time_steps = list(range(len(positions)))
+    trajectory_x = [pos[0] for pos in positions]
+    trajectory_y = [pos[1] for pos in positions]
+
+    # Create a 2D representation showing x and y over time
+    ax2.plot(time_steps, trajectory_x, 'b-', label='X coordinate', alpha=0.7)
+    ax2.plot(time_steps, trajectory_y, 'r-', label='Y coordinate', alpha=0.7)
+    ax2.set_xlabel('Time Step')
+    ax2.set_ylabel('Coordinate Value')
+    ax2.set_title('Trajectory Coordinates Over Time')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+    plt.suptitle('Handwriting Prediction: Cumulative Probability Analysis', fontsize=16, fontweight='bold')
+    plt.tight_layout()
+
+    # Save the figure
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
+    print(f"✅ Cumulative heatmap saved to {save_path}")
+
+
 def visualize_prediction_sequence(
     model: tf.keras.Model,
     stroke_sequence: np.ndarray,
@@ -137,6 +272,7 @@ def visualize_prediction_sequence(
     num_components: int = 20,
     grid_size: int = 100,
     fps: int = 2,
+    generate_cumulative_heatmap: bool = True,
 ):
     """Create a GIF showing prediction evolution as more context is provided."""
     figures = []
@@ -154,8 +290,12 @@ def visualize_prediction_sequence(
     # Track mixture component activations over time for visualization
     component_activations = []  # Will store pi values for each timestep
 
+    # Track cumulative probability distributions for Figure 10-style visualization
+    cumulative_prob_grids = []  # Will store probability grids for each timestep
+    cumulative_positions = []   # Will store the positions where predictions were made
+
     # Get sequence length
-    seq_len = min(len(stroke_sequence), 400)  # Limit to 50 points for visualization
+    seq_len = min(len(stroke_sequence), 400)  # Limit to 400 points for visualization
 
     print(f"Generating prediction visualizations for {seq_len} steps...")
 
@@ -183,6 +323,26 @@ def visualize_prediction_sequence(
 
         # Store component activations for time plot
         component_activations.append(params["pi"].copy())
+
+        # Store cumulative probability information for Figure 10-style visualization
+        if generate_cumulative_heatmap:
+            # Compute probability grid for this timestep (relative to current position)
+            # USE UNWEIGHTED distributions to show all active components including high-variance ones
+            X_rel, Y_rel, prob_grid_rel = compute_probability_grid(
+                params["pi"],
+                params["mu_x"],
+                params["mu_y"],
+                params["sigma_x"],
+                params["sigma_y"],
+                params["rho"],
+                grid_size=150,
+                grid_range=15.0,  # Wider range for cumulative view
+                use_weights=False,  # UNWEIGHTED to see all components including end-of-stroke jumps
+            )
+
+            # Store the relative grid and current position
+            cumulative_prob_grids.append(prob_grid_rel.copy())
+            cumulative_positions.append([stroke_sequence[t - 1, 0], stroke_sequence[t - 1, 1]])
 
         # Create figure with 6 subplots in 2x3 grid
         fig = plt.figure(figsize=(24, 12))
@@ -661,6 +821,16 @@ def visualize_prediction_sequence(
         if t % 10 == 0:
             print(f"  Generated frame {t}/{seq_len}")
 
+    # Generate the cumulative probability heatmap (Figure 10 style)
+    if generate_cumulative_heatmap and len(cumulative_prob_grids) > 0:
+        print("Generating cumulative probability heatmap...")
+        create_cumulative_heatmap(
+            cumulative_prob_grids,
+            cumulative_positions,
+            stroke_sequence,
+            save_path.replace(".gif", "_cumulative_heatmap.png")
+        )
+
     # Create GIF
     print(f"Creating GIF: {save_path}")
     if len(figures) > 5:  # Only create GIF if we have enough frames
@@ -758,7 +928,15 @@ def main():
 
     # Generate visualization
     gif_path = os.path.join(output_dir, f"prediction_sequence_{sample_idx}.gif")
-    visualize_prediction_sequence(model, stroke_sequence, save_path=gif_path, num_components=20, grid_size=80, fps=2)
+    visualize_prediction_sequence(
+        model,
+        stroke_sequence,
+        save_path=gif_path,
+        num_components=20,
+        grid_size=80,
+        fps=2,
+        generate_cumulative_heatmap=True
+    )
 
     # Also create a static visualization of a single prediction
     print("\nGenerating static prediction visualization...")

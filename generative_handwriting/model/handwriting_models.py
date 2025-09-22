@@ -189,6 +189,8 @@ class DeepHandwritingSynthesisModel(tf.keras.Model):
         # Metric trackers for proper loss aggregation
         self.loss_tracker = tf.keras.metrics.Mean(name="loss")
         self.nll_tracker = tf.keras.metrics.Mean(name="nll")
+        self.eos_accuracy_tracker = tf.keras.metrics.Mean(name="eos_accuracy")
+        self.eos_prob_tracker = tf.keras.metrics.Mean(name="eos_prob")
 
     def call(
         self, inputs: Dict[str, tf.Tensor], training: Optional[bool] = None, mask: Optional[tf.Tensor] = None
@@ -226,7 +228,7 @@ class DeepHandwritingSynthesisModel(tf.keras.Model):
     @property
     def metrics(self):
         # Tells Keras what metrics to reset/aggregate each epoch
-        return [self.loss_tracker, self.nll_tracker]
+        return [self.loss_tracker, self.nll_tracker, self.eos_accuracy_tracker, self.eos_prob_tracker]
 
     def train_step(self, data: Tuple[Dict[str, tf.Tensor], tf.Tensor]) -> Dict[str, tf.Tensor]:
         inputs, y_true = data
@@ -242,10 +244,30 @@ class DeepHandwritingSynthesisModel(tf.keras.Model):
         # Use optimizer's global_clipnorm instead of manual clipping to avoid double clipping
         self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
+        # Calculate EOS monitoring metrics
+        eos_logits = y_pred[:, :, -1]  # Last column contains EOS logits
+        eos_probs = tf.sigmoid(eos_logits)
+        eos_predictions = tf.round(eos_probs)
+        eos_targets = y_true[:, :, 2]  # EOS is the 3rd column (index 2)
+
+        # Apply sequence mask for accurate metrics
+        mask = tf.sequence_mask(target_stroke_lens, maxlen=tf.shape(y_true)[1], dtype=tf.float32)
+        masked_correct = tf.cast(tf.equal(eos_predictions, eos_targets), tf.float32) * mask
+        eos_accuracy = tf.reduce_sum(masked_correct) / tf.maximum(tf.reduce_sum(mask), 1.0)
+        mean_eos_prob = tf.reduce_sum(eos_probs * mask) / tf.maximum(tf.reduce_sum(mask), 1.0)
+
         # Update metrics so callbacks/History see real numbers
         self.nll_tracker.update_state(nll)
         self.loss_tracker.update_state(loss)
-        return {"loss": self.loss_tracker.result(), "nll": self.nll_tracker.result()}
+        self.eos_accuracy_tracker.update_state(eos_accuracy)
+        self.eos_prob_tracker.update_state(mean_eos_prob)
+
+        return {
+            "loss": self.loss_tracker.result(),
+            "nll": self.nll_tracker.result(),
+            "eos_accuracy": self.eos_accuracy_tracker.result(),
+            "eos_prob": self.eos_prob_tracker.result()
+        }
 
     def build(self, inputs_by_name_shape: Union[Dict[str, Tuple[int, ...]], Tuple[int, ...]]) -> None:
         # Input here is going to look like:

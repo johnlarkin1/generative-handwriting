@@ -2,11 +2,12 @@ import os
 import xml.etree.ElementTree as ET
 from typing import Optional, Set, Tuple
 
-import drawing
 import numpy as np
-from alphabet import encode_ascii
-from constants import MAX_CHAR_LEN, MAX_STROKE_LEN, STROKE_SCALE_FACTOR, STROKE_SPACE_THRESHOLD
 from tqdm import tqdm
+
+import generative_handwriting.drawing as drawing
+from generative_handwriting.alphabet import encode_ascii
+from generative_handwriting.constants import MAX_CHAR_LEN, MAX_STROKE_LEN, STROKE_SCALE_FACTOR, STROKE_SPACE_THRESHOLD
 
 
 class HandwritingDataLoader:

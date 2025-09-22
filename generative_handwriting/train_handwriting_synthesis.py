@@ -163,6 +163,22 @@ if __name__ == "__main__":
     char_seq = combined_train_trans
     char_seq_len = combined_trans_lengths
 
+    # EOS Data Verification - analyze distribution of end-of-stroke signals
+    print("🔍 EOS Data Verification (Synthesis):")
+    eos_values = combined_train_strokes[:, :, 2]  # EOS is the 3rd column (index 2)
+    total_timesteps = np.sum(combined_train_lengths)
+    eos_count = np.sum(eos_values)
+    eos_ratio = eos_count / total_timesteps
+    sequences_with_eos = np.mean(np.any(eos_values == 1, axis=1))
+
+    print(f"  • Total timesteps: {total_timesteps}")
+    print(f"  • EOS count: {eos_count}")
+    print(f"  • EOS ratio: {eos_ratio:.4f} ({eos_ratio*100:.2f}%)")
+    print(f"  • Sequences with EOS: {sequences_with_eos:.2f}")
+    print(f"  • Expected strokes per sequence: {eos_count / len(combined_train_strokes):.1f}")
+    print(f"  • EOS value range: [{np.min(eos_values):.1f}, {np.max(eos_values):.1f}]")
+    print("✅ EOS data verification complete\n")
+
     best_loss = float("inf")
     batch_size = BATCH_SIZE
     print(f"Debugging info: {debugging_dir}")

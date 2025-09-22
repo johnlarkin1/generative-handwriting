@@ -15,7 +15,8 @@ from constants import (
 )
 
 from generative_handwriting.common import print_model_parameters
-from generative_handwriting.debug_utils import NaNMonitor, check_data_batch, log_tensor_statistics
+
+# Debug utilities removed - using simpler error handling
 from generative_handwriting.loader import HandwritingDataLoader
 from generative_handwriting.model.handwriting_models import DeepHandwritingPredictionModel
 from generative_handwriting.model.mixture_density_network import MixtureDensityLayer, mdn_loss
@@ -68,8 +69,8 @@ def compute_graves_log_loss(model, x_data, y_data, seq_lengths, num_mixture_comp
 
         # Compute SSE (sum squared error) for comparison
         # Extract means from predictions (indices num_components:3*num_components)
-        mu_x = predictions[:, :, num_mixture_components:2*num_mixture_components]
-        mu_y = predictions[:, :, 2*num_mixture_components:3*num_mixture_components]
+        mu_x = predictions[:, :, num_mixture_components : 2 * num_mixture_components]
+        mu_y = predictions[:, :, 2 * num_mixture_components : 3 * num_mixture_components]
         pi = predictions[:, :, :num_mixture_components]
 
         # Get most likely component for each timestep
@@ -78,9 +79,14 @@ def compute_graves_log_loss(model, x_data, y_data, seq_lengths, num_mixture_comp
         seq_len = tf.shape(mu_x)[1]
 
         # Gather the means for the most likely components
-        indices = tf.stack([tf.range(batch_size_curr)[:, None] * tf.ones([1, seq_len], dtype=tf.int32),
-                           tf.range(seq_len)[None, :] * tf.ones([batch_size_curr, 1], dtype=tf.int32),
-                           best_components], axis=-1)
+        indices = tf.stack(
+            [
+                tf.range(batch_size_curr)[:, None] * tf.ones([1, seq_len], dtype=tf.int32),
+                tf.range(seq_len)[None, :] * tf.ones([batch_size_curr, 1], dtype=tf.int32),
+                best_components,
+            ],
+            axis=-1,
+        )
 
         pred_x = tf.gather_nd(mu_x, indices)
         pred_y = tf.gather_nd(mu_y, indices)
@@ -91,7 +97,7 @@ def compute_graves_log_loss(model, x_data, y_data, seq_lengths, num_mixture_comp
 
         # Apply mask for valid timesteps
         mask = tf.sequence_mask(batch_len, maxlen=tf.shape(batch_y)[1], dtype=tf.float32)
-        squared_error = ((pred_x - actual_x)**2 + (pred_y - actual_y)**2) * mask
+        squared_error = ((pred_x - actual_x) ** 2 + (pred_y - actual_y) ** 2) * mask
         total_sse += tf.reduce_sum(squared_error).numpy()
 
     # Compute averages
@@ -144,6 +150,22 @@ if __name__ == "__main__":
     # Graves: labels are x_{t+1}, so there are (len-1) valid targets per sequence.
     y_train_len = np.maximum(x_train_len - 1, 1)
 
+    # EOS Data Verification - analyze distribution of end-of-stroke signals
+    print("🔍 EOS Data Verification:")
+    eos_values = combined_train_strokes[:, :, 2]  # EOS is the 3rd column (index 2)
+    total_timesteps = np.sum(combined_train_lengths)
+    eos_count = np.sum(eos_values)
+    eos_ratio = eos_count / total_timesteps
+    sequences_with_eos = np.mean(np.any(eos_values == 1, axis=1))
+
+    print(f"  • Total timesteps: {total_timesteps}")
+    print(f"  • EOS count: {eos_count}")
+    print(f"  • EOS ratio: {eos_ratio:.4f} ({eos_ratio * 100:.2f}%)")
+    print(f"  • Sequences with EOS: {sequences_with_eos:.2f}")
+    print(f"  • Expected strokes per sequence: {eos_count / len(combined_train_strokes):.1f}")
+    print(f"  • EOS value range: [{np.min(eos_values):.1f}, {np.max(eos_values):.1f}]")
+    print("✅ EOS data verification complete\n")
+
     # Prepare validation data
     x_val = validation_strokes
     x_val_len = validation_lengths
@@ -175,9 +197,16 @@ if __name__ == "__main__":
         except RuntimeError as e:
             print(f"⚠️ GPU memory configuration failed: {e}")
 
-    # Initialize NaN monitor
-    nan_monitor = NaNMonitor(checkpoint_dir=model_save_dir)
-    print("🔍 NaN monitoring enabled")
+    # Simplified error handling without debug utilities
+    print("🔍 Training with basic error monitoring")
+
+    def simple_check_data_batch(batch_data, step):
+        """Simple NaN check for batch data."""
+        for key, tensor in batch_data.items():
+            if tf.reduce_any(tf.math.is_nan(tensor)) or tf.reduce_any(tf.math.is_inf(tensor)):
+                print(f"⚠️ NaN/Inf found in {key} at step {step}")
+                return True
+        return False
 
     if not model_loaded:
         print("No suitable saved model found or model has changed, initializing a new one...")
@@ -187,6 +216,7 @@ if __name__ == "__main__":
 
     last_trained_epoch = load_epochs_info(epochs_info_path)
     total_step = 0
+    nan_detected = False  # Track if NaN is detected to break training
 
     for epoch in range(last_trained_epoch, desired_epochs):
         print(f"Epoch {epoch + 1}/{desired_epochs}")
@@ -197,7 +227,7 @@ if __name__ == "__main__":
 
             # Check input data for NaN/Inf
             batch_data = {"batch_x": batch_x, "batch_y": batch_y, "batch_len": batch_len}
-            if check_data_batch(batch_data, step):
+            if simple_check_data_batch(batch_data, step):
                 print(f"⚠️  Skipping batch {step} due to invalid input data")
                 continue
 
@@ -206,27 +236,29 @@ if __name__ == "__main__":
                 predictions = stroke_model(batch_x, training=True)
 
                 # Check predictions for NaN before loss calculation
-                if nan_monitor.check_tensors({"predictions": predictions}, total_step, "model_output"):
-                    print(f"🚨 NaN detected in model predictions at step {total_step}")
-                    nan_monitor.save_emergency_checkpoint(stroke_model, total_step)
+                if tf.reduce_any(tf.math.is_nan(predictions)) or tf.reduce_any(tf.math.is_inf(predictions)):
+                    print(f"🚨 NaN/Inf detected in model predictions at step {total_step}")
+                    nan_detected = True
                     break
 
                 nll = model_mdn_loss(batch_y, predictions, batch_len, num_mixture_components)
                 # Add layer regularizers (e.g., from MixtureDensityLayer)
-                total_loss = nll + tf.add_n(stroke_model.losses)
+                reg_loss = tf.add_n(stroke_model.losses) if stroke_model.losses else 0.0
+                total_loss = nll + reg_loss
                 loss = total_loss
 
                 # Check loss for NaN
                 if tf.math.is_nan(loss) or tf.math.is_inf(loss):
                     print(f"🚨 NaN/Inf detected in loss at step {total_step}: {loss.numpy()}")
-                    nan_monitor.save_emergency_checkpoint(stroke_model, total_step)
+                    nan_detected = True
                     break
             gradients = tape.gradient(loss, stroke_model.trainable_variables)
 
             # Check gradients for NaN
-            if nan_monitor.check_gradients(gradients, stroke_model.trainable_variables, total_step):
+            has_nan_grad = any(tf.reduce_any(tf.math.is_nan(g)) for g in gradients if g is not None)
+            if has_nan_grad:
                 print(f"🚨 NaN detected in gradients at step {total_step}")
-                nan_monitor.save_emergency_checkpoint(stroke_model, total_step)
+                nan_detected = True
                 break
 
             clipped = [
@@ -236,27 +268,50 @@ if __name__ == "__main__":
             optimizer.apply_gradients(clipped)
 
             # Check model weights after update
-            if nan_monitor.check_model_weights(stroke_model, total_step):
+            has_nan_weights = any(tf.reduce_any(tf.math.is_nan(w)) for w in stroke_model.trainable_variables)
+            if has_nan_weights:
                 print(f"🚨 NaN detected in model weights after update at step {total_step}")
-                nan_monitor.save_emergency_checkpoint(stroke_model, total_step)
+                nan_detected = True
                 break
             epoch_losses.append(loss.numpy())
 
             if epoch == 0 and step == 0:
                 print_model_parameters(stroke_model)
 
-            if step % 5 == 0:
-                print(f"Step {step}, Loss: {loss.numpy()}")
-                log_tensor_statistics(loss, "loss", total_step)
+            if step == 0:
+                # Calculate EOS monitoring metrics
+                eos_logits = predictions[:, :, -1]  # Last column contains EOS logits
+                eos_probs = tf.sigmoid(eos_logits)
+                eos_predictions = tf.round(eos_probs)
+                eos_targets = batch_y[:, :, 2]  # EOS is the 3rd column (index 2)
 
-            # Log detailed statistics every 50 steps
+                # Apply sequence mask for accurate metrics
+                mask = tf.sequence_mask(batch_len, maxlen=tf.shape(batch_y)[1], dtype=tf.float32)
+                masked_correct = tf.cast(tf.equal(eos_predictions, eos_targets), tf.float32) * mask
+                eos_accuracy = tf.reduce_sum(masked_correct) / tf.maximum(tf.reduce_sum(mask), 1.0)
+                mean_eos_prob = tf.reduce_sum(eos_probs * mask) / tf.maximum(tf.reduce_sum(mask), 1.0)
+                mean_eos_target = tf.reduce_sum(eos_targets * mask) / tf.maximum(tf.reduce_sum(mask), 1.0)
+
+                print(
+                    f"Step {step}, Loss: {loss.numpy():.4f}, EOS Acc: {eos_accuracy.numpy():.3f}, "
+                    f"EOS Prob: {mean_eos_prob.numpy():.3f}, EOS Target: {mean_eos_target.numpy():.3f}"
+                )
+                # Simple loss statistics
+                loss_min = tf.reduce_min(loss)
+                loss_max = tf.reduce_max(loss)
+                loss_mean = tf.reduce_mean(loss)
+                print(f"  Loss stats: min={loss_min:.6f}, max={loss_max:.6f}, mean={loss_mean:.6f}")
+
+            # Log simple statistics every 50 steps
             if step % 50 == 0:
-                log_tensor_statistics(predictions, "predictions", total_step)
+                pred_min = tf.reduce_min(predictions)
+                pred_max = tf.reduce_max(predictions)
+                pred_mean = tf.reduce_mean(predictions)
+                print(f"  Predictions stats: min={pred_min:.6f}, max={pred_max:.6f}, mean={pred_mean:.6f}")
 
         # Break if NaN detected
-        if nan_monitor.nan_count > 0:
-            print(f"💔 Training stopped due to {nan_monitor.nan_count} NaN detections")
-            nan_monitor.save_nan_report(os.path.join(model_save_dir, "nan_report.json"))
+        if nan_detected:
+            print("💔 Training stopped due to NaN detection")
             break
 
         # After each epoch, check if the average loss is the best so far
@@ -265,9 +320,7 @@ if __name__ == "__main__":
 
         # Compute validation metrics (Graves log-loss and SSE)
         print("Computing validation metrics...")
-        val_log_loss, val_sse = compute_graves_log_loss(
-            stroke_model, x_val, y_val, y_val_len, num_mixture_components
-        )
+        val_log_loss, val_sse = compute_graves_log_loss(stroke_model, x_val, y_val, y_val_len, num_mixture_components)
         print(f"Validation Graves Log-Loss: {val_log_loss:.1f} nats")
         print(f"Validation SSE: {val_sse:.4f}")
 
@@ -285,11 +338,6 @@ if __name__ == "__main__":
             stroke_model.save(model_save_path)  # Save the model
         save_epochs_info(epoch + 1, epochs_info_path)
 
-    # Save final NaN report
-    if nan_monitor.nan_count > 0:
-        nan_monitor.save_nan_report(os.path.join(model_save_dir, "nan_report.json"))
-        print(f"📊 Final NaN report: {nan_monitor.nan_count} NaN occurrences detected")
-    else:
-        print("✅ Training completed successfully with no NaN detections")
+    print("✅ Training completed successfully")
 
     print("Training completed.")
