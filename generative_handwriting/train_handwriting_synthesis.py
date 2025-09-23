@@ -148,7 +148,7 @@ def compute_graves_log_loss_synthesis(
         total_sse += tf.reduce_sum(squared_error).numpy()
 
     # Compute averages
-    graves_log_loss = total_nll / max(total_timesteps, 1)  # Mean NLL in nats
+    graves_log_loss = -total_nll / max(total_timesteps, 1)  # Mean NLL in nats
     mean_sse = total_sse / max(total_timesteps, 1)
 
     return graves_log_loss, mean_sse

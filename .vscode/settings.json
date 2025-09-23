@@ -27,5 +27,5 @@
   },
 
   // Spell-checking (unchanged)
-  "cSpell.words": ["gaussians"]
+  "cSpell.words": ["gaussians", "preact"]
 }

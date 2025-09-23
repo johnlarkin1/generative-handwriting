@@ -6,13 +6,7 @@ import tensorflow as tf
 
 tf.config.optimizer.set_jit(True)
 
-from constants import (
-    BATCH_SIZE,
-    GRADIENT_CLIP_VALUE,
-    LEARNING_RATE,
-    NUM_BIVARIATE_GAUSSIAN_MIXTURE_COMPONENTS,
-    NUM_EPOCH,
-)
+from constants import BATCH_SIZE, LEARNING_RATE, NUM_BIVARIATE_GAUSSIAN_MIXTURE_COMPONENTS, NUM_EPOCH
 
 from generative_handwriting.common import print_model_parameters
 
@@ -101,10 +95,10 @@ def compute_graves_log_loss(model, x_data, y_data, seq_lengths, num_mixture_comp
         total_sse += tf.reduce_sum(squared_error).numpy()
 
     # Compute averages
-    graves_log_loss = -total_nll / max(total_timesteps, 1)  # Negative log-likelihood in nats
+    graves_nll = total_nll / max(total_timesteps, 1)  # Mean NLL (nats)
     mean_sse = total_sse / max(total_timesteps, 1)
 
-    return graves_log_loss, mean_sse
+    return graves_nll, mean_sse
 
 
 def load_model_if_exists(model_save_path):
@@ -185,7 +179,7 @@ if __name__ == "__main__":
     )  # Cache dataset in memory for faster access
 
     # Use Keras 3 compatible optimizer with mixed precision
-    optimizer = tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE, clipnorm=10.0)
 
     # Configure GPU memory growth to avoid OOM
     gpus = tf.config.experimental.list_physical_devices("GPU")
@@ -261,11 +255,7 @@ if __name__ == "__main__":
                 nan_detected = True
                 break
 
-            clipped = [
-                (tf.clip_by_value(g, -GRADIENT_CLIP_VALUE, GRADIENT_CLIP_VALUE), v_)
-                for g, v_ in zip(gradients, stroke_model.trainable_variables, strict=False)
-            ]
-            optimizer.apply_gradients(clipped)
+            optimizer.apply_gradients(zip(gradients, stroke_model.trainable_variables))
 
             # Check model weights after update
             has_nan_weights = any(tf.reduce_any(tf.math.is_nan(w)) for w in stroke_model.trainable_variables)
@@ -320,21 +310,21 @@ if __name__ == "__main__":
 
         # Compute validation metrics (Graves log-loss and SSE)
         print("Computing validation metrics...")
-        val_log_loss, val_sse = compute_graves_log_loss(stroke_model, x_val, y_val, y_val_len, num_mixture_components)
-        print(f"Validation Graves Log-Loss: {val_log_loss:.1f} nats")
+        val_nll, val_sse = compute_graves_log_loss(stroke_model, x_val, y_val, y_val_len, num_mixture_components)
+        print(f"Validation NLL: {val_nll:.1f} nats")
         print(f"Validation SSE: {val_sse:.4f}")
 
         # Also compute training set Graves metric for comparison
-        train_log_loss, train_sse = compute_graves_log_loss(
+        train_nll, train_sse = compute_graves_log_loss(
             stroke_model, x_train[:1000], y_train[:1000], y_train_len[:1000], num_mixture_components
         )
-        print(f"Training Graves Log-Loss (first 1000): {train_log_loss:.1f} nats")
+        print(f"Training NLL (first 1000): {train_nll:.1f} nats")
         print(f"Training SSE (first 1000): {train_sse:.4f}")
 
-        # Use validation log-loss for model selection
-        if val_log_loss < best_loss:
-            print(f"New best validation log-loss {val_log_loss:.1f}, saving model.")
-            best_loss = val_log_loss
+        # Use validation NLL for model selection
+        if val_nll < best_loss:
+            print(f"New best validation NLL {val_nll:.1f}, saving model.")
+            best_loss = val_nll
             stroke_model.save(model_save_path)  # Save the model
         save_epochs_info(epoch + 1, epochs_info_path)
 

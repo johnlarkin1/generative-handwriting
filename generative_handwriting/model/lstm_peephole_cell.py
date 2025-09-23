@@ -3,6 +3,7 @@ from typing import Tuple
 import tensorflow as tf
 
 
+
 class LSTMPeepholeCell(tf.keras.layers.Layer):
     def __init__(
         self,
@@ -108,12 +109,7 @@ class LSTMPeepholeCell(tf.keras.layers.Layer):
             i_lin = i_lin + c_tm1 * pw_i
             f_lin = f_lin + c_tm1 * pw_f
 
-        # if we clip, we should do this before activation
-        if self.should_clip_gradients:
-            i_lin = tf.clip_by_value(i_lin, -self.clip_value, self.clip_value)
-            f_lin = tf.clip_by_value(f_lin, -self.clip_value, self.clip_value)
-            g_lin = tf.clip_by_value(g_lin, -self.clip_value, self.clip_value)
-            o_lin = tf.clip_by_value(o_lin, -self.clip_value, self.clip_value)
+        # Note: gradient clipping is now handled globally via clipnorm in optimizer
 
         # apply activation functions! throwback to biomedical signals
         i = tf.sigmoid(i_lin)
