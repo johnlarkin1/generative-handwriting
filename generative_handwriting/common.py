@@ -6,83 +6,11 @@ import imageio
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
-from constants import TEST_NUM_POINTS
 
 
 def check_files_exist(file_paths: list[str]) -> bool:
     """Check if all the required files exist."""
     return all(os.path.isfile(file_path) for file_path in file_paths)
-
-
-def get_sample_data(num_points: int, should_zigzag: bool) -> np.ndarray:
-    u = np.linspace(0, 10 * np.pi, num_points)
-    if should_zigzag:
-        x = u
-        y = 8.0 * (np.abs((0.125 * u - np.floor(0.125 * u)) - 0.5) - 0.25)
-    else:
-        x = u + 3.0 * np.sin(u)
-        y = -2.0 * np.cos(u)
-    x -= x.min()
-    y -= y.min()
-    data = np.column_stack((x, y))
-    return data
-
-
-def generate_zig_zag_data() -> np.ndarray:
-    return get_sample_data(TEST_NUM_POINTS, should_zigzag=True)
-
-
-def generate_loop_da_loop_data() -> np.ndarray:
-    return get_sample_data(TEST_NUM_POINTS, should_zigzag=False)
-
-
-def generate_fixed_points(data, num_points=100):
-    indices = np.linspace(0, len(data) - 1, num=num_points, dtype=int)
-    fixed_points = data[indices]
-    return fixed_points
-
-
-def prepare_data_for_sequential_prediction(data):
-    # Assuming data is shaped as (n_points, 2), where each row is [x, y]
-    x_train = data[:-1]  # All points except the last
-    y_train = data[1:]  # All points except the first
-    return x_train, y_train
-
-
-def create_subsequence_batches(sequence, target, sequence_length):
-    subsequences = []
-    targets = []
-    for start in range(0, len(sequence) - sequence_length + 1, 1):
-        end = start + sequence_length
-        subsequences.append(sequence[start:end])
-        targets.append(target[start:end])
-
-    # Convert to numpy arrays
-    subsequences = np.array(subsequences)
-    targets = np.array(targets)
-
-    return subsequences, targets
-
-
-def prepare_data_for_sequential_prediction_with_eos(data, eos_value=1):
-    """
-    Prepares the data for sequential prediction by adding a constant end-of-stroke feature.
-
-    Args:
-    data: Numpy array of shape (num_points, 2), where each row is [x, y].
-    eos_value: The constant value to use for the end-of-stroke dimension.
-
-    Returns:
-    A tuple of numpy arrays (x_train, y_train) for model training, with the shape [num_samples, num_timesteps, 3].
-    """
-    # Assuming data is shaped as (n_points, 2), where each row is [x, y]
-    # Add a constant third dimension for the end-of-stroke feature
-    data_with_eos = np.hstack([data, eos_value * np.ones((data.shape[0], 1))])
-
-    # Prepare sequential training data
-    x_train = data_with_eos[:-1]  # Use all but the last point as input
-    y_train = data_with_eos[1:]  # Target is the next point
-    return x_train, y_train
 
 
 def create_sequences(data, sequence_length):
@@ -104,36 +32,6 @@ def create_sequences(data, sequence_length):
         x_sequences.append(x_seq)
         y_sequences.append(y_seq)
     return np.array(x_sequences), np.array(y_sequences)
-
-
-def show_initial_data(zigzag_data, loop_data) -> None:
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
-    ax1.scatter(
-        zigzag_data[:, 0],
-        zigzag_data[:, 1],
-        color="blue",
-        s=10,
-        label="Zig Zag Data",
-    )
-    ax1.set_xlabel("X")
-    ax1.set_ylabel("Y")
-    ax1.set_title("Zig Zag Data")
-    ax1.legend()
-
-    ax2.scatter(
-        loop_data[:, 0],
-        loop_data[:, 1],
-        color="green",
-        s=10,
-        label="Loop Da Loop Data",
-    )
-    ax2.set_xlabel("X")
-    ax2.set_ylabel("Y")
-    ax2.set_title("Loop Da Loop Data")
-    ax2.legend()
-
-    plt.tight_layout()
-    plt.show()
 
 
 def plot_strokes_from_dx_dy(stroke_data, show_image: bool = False, title="Handwriting Stroke Plot"):

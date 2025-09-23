@@ -19,8 +19,8 @@ class MixtureDensityLayer(tf.keras.layers.Layer):
     ):
         super(MixtureDensityLayer, self).__init__(name=name, **kwargs)
         self.num_components = num_components
-        # The number of parameters per mixture component: 2 means, 2 standard deviations, 1 correlation
-        # Plus 1 for the mixture weights and 1 for the end-of-stroke probability
+        # The number of parameters per mixture component: 2 means, 2 standard deviations, 1 correlation, 1 weight , 1 for eos
+        # so that's our constant num_mixture_components_per_component
         self.output_dim = num_components * NUM_MIXTURE_COMPONENTS_PER_COMPONENT + 1
         self.mod_name = name
         self.temperature = temperature
@@ -32,71 +32,63 @@ class MixtureDensityLayer(tf.keras.layers.Layer):
     def build(self, input_shape):
         graves_initializer = tf.keras.initializers.TruncatedNormal(mean=0.0, stddev=0.075)
 
-        # These will be determined dynamically in call()
         self.input_units = input_shape[-1]
+        # weights
         self.W_pi = self.add_weight(
             name=f"{self.mod_name}_W_pi",
             shape=(input_shape[-1], self.num_components),
             initializer=graves_initializer,
             trainable=True,
         )
-        # Weights for means
         self.W_mu = self.add_weight(
             name=f"{self.mod_name}_W_mu",
             shape=(input_shape[-1], self.num_components * 2),
             initializer=graves_initializer,
             trainable=True,
         )
-        # Weights for standard deviations
         self.W_sigma = self.add_weight(
             name=f"{self.mod_name}_W_sigma",
             shape=(input_shape[-1], self.num_components * 2),
             initializer=graves_initializer,
             trainable=True,
         )
-        # Weights for correlation coefficients
         self.W_rho = self.add_weight(
             name=f"{self.mod_name}_W_rho",
             shape=(input_shape[-1], self.num_components),
             initializer=graves_initializer,
             trainable=True,
         )
-        # Weights for end-of-stroke probability
         self.W_eos = self.add_weight(
             name=f"{self.mod_name}_W_eos",
             shape=(input_shape[-1], 1),
             initializer=graves_initializer,
             trainable=True,
         )
-        # Bias for mixture weights
+        # biases
         self.b_pi = self.add_weight(
             name=f"{self.mod_name}_b_pi",
             shape=(self.num_components,),
             initializer="zeros",
             trainable=True,
         )
-        # Bias for means
         self.b_mu = self.add_weight(
             name=f"{self.mod_name}_b_mu",
             shape=(self.num_components * 2,),
             initializer="zeros",
             trainable=True,
         )
-        # Bias for standard deviations
         self.b_sigma = self.add_weight(
             name=f"{self.mod_name}_b_sigma",
             shape=(self.num_components * 2,),
             initializer="zeros",
             trainable=True,
         )
-        # Bias for correlation coefficients
         self.b_rho = self.add_weight(
             name=f"{self.mod_name}_b_rho",
             shape=(self.num_components,),
             initializer="zeros",
             trainable=True,
         )
-        # Bias for end-of-stroke probability
         self.b_eos = self.add_weight(
             name=f"{self.mod_name}_b_eos",
             shape=(1,),

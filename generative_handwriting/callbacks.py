@@ -13,7 +13,7 @@ class PrintModelParametersCallback(Callback):
             try:
                 # Only try to show summary if model isn't already built
                 # Avoid calling build() after model is already built
-                if hasattr(self.model, '_is_built') and self.model._is_built:
+                if hasattr(self.model, "_is_built") and self.model._is_built:
                     print("Model summary unavailable for complex attention-based synthesis model")
                     total_params = sum(tf.size(var).numpy() for var in self.model.trainable_variables)
                     print(f"Total trainable parameters: {total_params:,}")
@@ -43,23 +43,6 @@ class ExtendedModelCheckpoint(ModelCheckpoint):
             print(f"\nEpoch {epoch + 1}: Loss improved from {self.last_best} to {current_loss}, saving model.")
             self.last_best = current_loss
         super().on_epoch_end(epoch, logs)
-
-
-class ModelCheckpointWithPeriod(ModelCheckpoint):
-    def __init__(self, model_name: str, period: int, **kwargs) -> None:
-        self.model_name = model_name
-        self.base_dir = os.path.dirname(os.path.abspath(__file__))
-        self.period = period
-        model_dir = os.path.join(self.base_dir, "saved_models", model_name)
-        os.makedirs(model_dir, exist_ok=True)
-        filepath = os.path.join(model_dir, "model_{epoch:02d}_{loss:.2f}.keras")
-        super().__init__(filepath, save_best_only=False, monitor="loss", mode="min", **kwargs)
-
-    def on_epoch_end(self, epoch: int, logs=None) -> None:
-        # Adjusting to ensure it saves on epoch 1 then every 'period' epochs thereafter
-        if (epoch + 1) % self.period == 0 or epoch == 0:
-            print(f"\nEpoch {epoch + 1}: Saving model.")
-            super().on_epoch_end(epoch, logs)
 
 
 class HandwritingVisualizeCallback(Callback):

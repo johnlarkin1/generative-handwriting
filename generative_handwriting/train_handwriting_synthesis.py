@@ -63,7 +63,9 @@ validation_strokes, validation_lengths = (
 )
 
 
-def compute_graves_log_loss_synthesis(model, stroke_data, stroke_lengths, char_data, char_lengths, num_mixture_components, batch_size=32):
+def compute_graves_log_loss_synthesis(
+    model, stroke_data, stroke_lengths, char_data, char_lengths, num_mixture_components, batch_size=32
+):
     """Compute mean negative log-likelihood (NLL) per timestep in nats.
 
     This aligns with the training objective and avoids confusing sign conventions.
@@ -111,8 +113,8 @@ def compute_graves_log_loss_synthesis(model, stroke_data, stroke_lengths, char_d
 
         # Compute SSE (sum squared error) for comparison
         # Extract means from predictions
-        mu_x = predictions[:, :, num_mixture_components:2*num_mixture_components]
-        mu_y = predictions[:, :, 2*num_mixture_components:3*num_mixture_components]
+        mu_x = predictions[:, :, num_mixture_components : 2 * num_mixture_components]
+        mu_y = predictions[:, :, 2 * num_mixture_components : 3 * num_mixture_components]
         pi = predictions[:, :, :num_mixture_components]
 
         # Get most likely component for each timestep
@@ -121,9 +123,14 @@ def compute_graves_log_loss_synthesis(model, stroke_data, stroke_lengths, char_d
         seq_len = tf.shape(mu_x)[1]
 
         # Gather the means for the most likely components
-        indices = tf.stack([tf.range(batch_size_curr)[:, None] * tf.ones([1, seq_len], dtype=tf.int32),
-                           tf.range(seq_len)[None, :] * tf.ones([batch_size_curr, 1], dtype=tf.int32),
-                           best_components], axis=-1)
+        indices = tf.stack(
+            [
+                tf.range(batch_size_curr)[:, None] * tf.ones([1, seq_len], dtype=tf.int32),
+                tf.range(seq_len)[None, :] * tf.ones([batch_size_curr, 1], dtype=tf.int32),
+                best_components,
+            ],
+            axis=-1,
+        )
 
         pred_x = tf.gather_nd(mu_x, indices)
         pred_y = tf.gather_nd(mu_y, indices)
@@ -145,6 +152,7 @@ def compute_graves_log_loss_synthesis(model, stroke_data, stroke_lengths, char_d
     mean_sse = total_sse / max(total_timesteps, 1)
 
     return graves_log_loss, mean_sse
+
 
 if __name__ == "__main__":
     # Preparing the input and target data for training
@@ -173,7 +181,7 @@ if __name__ == "__main__":
 
     print(f"  • Total timesteps: {total_timesteps}")
     print(f"  • EOS count: {eos_count}")
-    print(f"  • EOS ratio: {eos_ratio:.4f} ({eos_ratio*100:.2f}%)")
+    print(f"  • EOS ratio: {eos_ratio:.4f} ({eos_ratio * 100:.2f}%)")
     print(f"  • Sequences with EOS: {sequences_with_eos:.2f}")
     print(f"  • Expected strokes per sequence: {eos_count / len(combined_train_strokes):.1f}")
     print(f"  • EOS value range: [{np.min(eos_values):.1f}, {np.max(eos_values):.1f}]")
@@ -219,38 +227,10 @@ if __name__ == "__main__":
             global_clipnorm=GRADIENT_CLIP_VALUE,  # Use optimizer's global clipping instead of manual
         ),
         loss=None,  # Correct when overriding train_step
-        run_eagerly=False,  # Faster + works better with XLA; set True only when debugging
-        jit_compile=True,  # Enable XLA JIT compilation for better performance
+        run_eagerly=False,
+        jit_compile=True,
     )
 
-    # Add custom callback for validation metrics
-    class GravesMetricsCallback(tf.keras.callbacks.Callback):
-        def __init__(self, val_strokes, val_stroke_lens, val_chars, val_char_lens, num_components):
-            super().__init__()
-            self.val_strokes = val_strokes
-            self.val_stroke_lens = val_stroke_lens
-            self.val_chars = val_chars
-            self.val_char_lens = val_char_lens
-            self.num_components = num_components
-            self.best_val_loss = float('inf')
-
-        def on_epoch_end(self, epoch, logs=None):
-            if epoch % 5 == 0:  # Evaluate every 5 epochs to save time
-                print(f"\nComputing validation metrics for epoch {epoch + 1}...")
-                val_log_loss, val_sse = compute_graves_log_loss_synthesis(
-                    self.model, self.val_strokes, self.val_stroke_lens,
-                    self.val_chars, self.val_char_lens, self.num_components
-                )
-                print(f"Validation NLL: {val_log_loss:.1f} nats")
-                print(f"Validation SSE: {val_sse:.4f}")
-
-                # Save model if validation loss improved
-                if val_log_loss < self.best_val_loss:
-                    print(f"New best validation NLL {val_log_loss:.1f}, saving model.")
-                    self.best_val_loss = val_log_loss
-                    self.model.save(model_save_path)
-
-    # Prepare validation data for synthesis model
     val_chars = data_loader.validation_transcriptions
     val_char_lens = data_loader.validation_transcription_lengths
 
@@ -259,7 +239,6 @@ if __name__ == "__main__":
         tf.keras.callbacks.ReduceLROnPlateau(monitor="loss", factor=0.8, patience=10, verbose=1, min_lr=1e-6),
         ExtendedModelCheckpoint(model_name),
         PrintModelParametersCallback(),
-        GravesMetricsCallback(validation_strokes, validation_lengths, val_chars, val_char_lens, num_mixture_components),
     ]
 
     history = stroke_model.fit(dataset, epochs=desired_epochs, callbacks=callbacks)

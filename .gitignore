@@ -12,6 +12,8 @@ archived
 **.png
 generative_handwriting/prediction_visualizations/
 handwriting-synthesis
+handwriting-synthesis-modern
 scribe
 prediction_frames
 prediction_visualizations
+**.keras

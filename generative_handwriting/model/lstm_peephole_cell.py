@@ -8,7 +8,7 @@ class LSTMPeepholeCell(tf.keras.layers.Layer):
         self,
         num_lstm_units: int,
         idx: int,
-        clip_value=1.0,
+        clip_value=10.0,  # from the paper
         should_apply_peephole: bool = True,
         should_clip_gradients: bool = False,
         **kwargs,
@@ -25,10 +25,7 @@ class LSTMPeepholeCell(tf.keras.layers.Layer):
         self.output_size = tf.TensorShape([self.num_lstm_units])
         self.idx = idx + 1
 
-    def get_initial_state(self, inputs=None, batch_size=None, dtype=None):
-        """
-        Returns an initial state consisting of zeros for both the hidden state and the cell state.
-        """
+    def get_initial_state(self, inputs=None, batch_size=None, dtype=None) -> tuple[tf.Tensor, tf.Tensor]:
         if batch_size is None:
             batch_size = tf.shape(inputs)[0] if inputs is not None else None
         if dtype is None:
@@ -45,6 +42,11 @@ class LSTMPeepholeCell(tf.keras.layers.Layer):
         Building the LSTM cell with peephole connections.
         Basically defining all of the appropriate weights, biases, and peephole weights.
         """
+        # ok this is in the paper:
+        # > The network was trained with rmsprop, using the same parameters as in
+        # > the previous section. The network was retrained with adaptive weight noise,
+        # > initial standard deviation 0.075, and the output and LSTM gradients were again
+        # > clipped in the range [−100,100] and [−10,10] respectively.
         graves_initializer = tf.keras.initializers.TruncatedNormal(mean=0.0, stddev=0.075)
 
         self.kernel = self.add_weight(
@@ -58,7 +60,7 @@ class LSTMPeepholeCell(tf.keras.layers.Layer):
             name=f"lstm_peephole_recurrent_kernel{self.idx}",
         )
 
-        # Peephole weights for input, forget, and output gates
+        # peephole weights
         self.peephole_weights = self.add_weight(
             shape=(self.num_lstm_units, 3),
             initializer=graves_initializer,
@@ -92,6 +94,7 @@ class LSTMPeepholeCell(tf.keras.layers.Layer):
           + so element m in each gate vector only receives input from
           + element m of the cell vector
         """
+
         # Both of these are going to be shape (?, num_lstm_units)
         h_tm1, c_tm1 = state
         # basically the meat of eq, 7, 8, 9, 10
