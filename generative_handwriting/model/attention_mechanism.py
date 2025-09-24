@@ -59,11 +59,11 @@ class AttentionMechanism(tf.keras.layers.Layer):
         raw = self.dense_attention(inputs)
         alpha_hat, beta_hat, kappa_hat = tf.split(raw, 3, axis=1)  # shape: [batch_size, num_gaussians, 1]
 
-        # apply exp activation as in Graves eq. 48-51
-        alpha = tf.exp(alpha_hat)
-        beta = tf.exp(beta_hat)
+        # apply exp activation as in Graves eq. 48-51 with numerical safety
+        alpha = tf.exp(tf.clip_by_value(alpha_hat, -8.0, 8.0))
+        beta = tf.exp(tf.clip_by_value(beta_hat, -8.0, 8.0))
         # e^(kappa_hat + kappa_scale) = e^(kappa_hat) * e^(kappa_scale)
-        delta_kappa = tf.exp(kappa_hat + self.kappa_scale)  # smaller initial step with learnable scale
+        delta_kappa = tf.exp(tf.clip_by_value(kappa_hat + self.kappa_scale, -8.0, 5.0))
         kappa = prev_kappa + delta_kappa  # Eq. 51 cumulative monotonic
 
         char_len = tf.shape(char_seq_one_hot)[1]
@@ -79,13 +79,17 @@ class AttentionMechanism(tf.keras.layers.Layer):
 
         # phi - attention weights with numerical stability
         exponent = -beta * tf.square(kappa - u)
-        exponent = tf.clip_by_value(exponent, -50.0, 50.0)
+        # Keep exponent non-positive and bounded (Gaussian exponent should be ≤ 0)
+        exponent = tf.clip_by_value(exponent, -50.0, 0.0)
         phi = alpha * tf.exp(exponent)  # shape: [batch_size, num_gaussians, char_len]
         phi = tf.reduce_sum(phi, axis=1)  # Sum over gaussians: [B, L]
 
-        # sequence mask
+        # sequence mask with inf*0 safeguards
         sequence_mask = tf.sequence_mask(sequence_lengths, maxlen=char_len, dtype=tf.float32)
         phi = phi * sequence_mask  # mask paddings
+
+        # Sanitize non-finites from inf*0 scenarios
+        phi = tf.where(tf.math.is_finite(phi), phi, tf.zeros_like(phi))
         # we don't normalize here - Graves calls that out specifically!
         # > Note that the window mixture is not normalised
         # > and hence does not determine a probability distribution; however the window
@@ -96,6 +100,10 @@ class AttentionMechanism(tf.keras.layers.Layer):
         # window vec
         phi = tf.expand_dims(phi, axis=-1)  # shape: [batch_size, char_len, 1]
         w = tf.reduce_sum(phi * char_seq_one_hot, axis=1)  # shape: [batch_size, num_chars]
+
+        # Final safeguard for window vector
+        w = tf.where(tf.math.is_finite(w), w, tf.zeros_like(w))
+
         return w, kappa[:, :, 0]
 
     def get_config(self):

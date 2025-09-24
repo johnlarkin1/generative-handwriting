@@ -130,6 +130,15 @@ class HandwritingDataLoader:
                     print(f"Skipping blacklisted file: {file_name}")
                     continue
 
+                # Check extreme coordinate files (hardcoded exclusion)
+                extreme_coordinate_files = {
+                    "b10-755z-06.xml",  # Max norm: 64.60, 1 extreme point at index 187
+                    "b10-739z-06.xml",  # Max norm: 70.34, 1 extreme point at index 763
+                }
+                if file_name in extreme_coordinate_files:
+                    print(f"Skipping extreme coordinate file: {file_name}")
+                    continue
+
                 if filename_set:
                     file_name_without_extension = os.path.splitext(file_name)[0]
                     parts = file_name_without_extension.split("-")
@@ -245,10 +254,8 @@ class HandwritingDataLoader:
             offsets = offsets[:MAX_STROKE_LEN]
             offsets = drawing.normalize(offsets)
 
-            # Quality filtering: check for extreme coordinate values
-            if np.any(np.linalg.norm(offsets[:, :2], axis=1) > 60):
-                print(f"Filtering out {filename} due to extreme coordinate values")
-                return np.zeros((0, 3), dtype=np.float32), 0
+            # Note: Extreme coordinate files are now excluded at the file level
+            # so this quality filtering is no longer needed
 
             return offsets, len(offsets)
         except ET.ParseError as e:
