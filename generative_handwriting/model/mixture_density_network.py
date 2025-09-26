@@ -102,19 +102,24 @@ class MixtureDensityLayer(tf.keras.layers.Layer):
 
         pi_logits = tf.matmul(inputs, self.W_pi) + self.b_pi
         pi = tf.nn.softmax(pi_logits / temperature, axis=-1)  # [B, T, K]
+        # Add minimum threshold to prevent pi from becoming too small
+        pi = tf.clip_by_value(pi, 1e-6, 1.0)
+
         mu = tf.matmul(inputs, self.W_mu) + self.b_mu  # [B, T, 2K]
         mu1, mu2 = tf.split(mu, 2, axis=2)
 
-        # log sigma more stable
+        # log sigma more stable with tighter bounds
         log_sigma = tf.matmul(inputs, self.W_sigma) + self.b_sigma  # [B, T, 2K]
-        log_sigma = tf.clip_by_value(log_sigma, -7.0, 4.0)  # σ ∈ [~1e-3, ~55]
+        log_sigma = tf.clip_by_value(log_sigma, -5.0, 2.0)  # σ ∈ [~0.007, ~7.4]
         sigma = tf.exp(log_sigma)
         sigma1, sigma2 = tf.split(sigma, 2, axis=2)
+
         rho_raw = tf.matmul(inputs, self.W_rho) + self.b_rho
-        rho = tf.tanh(rho_raw)  # (-1, 1)
+        rho = tf.tanh(rho_raw) * 0.9  # Scale down to avoid ±1
+
         eos_logit = tf.matmul(inputs, self.W_eos) + self.b_eos
 
-        return tf.concat([pi, mu1, mu2, sigma1, sigma2, rho, tf.reshape(eos_logit, [-1, inputs.shape[1], 1])], axis=2)
+        return tf.concat([pi, mu1, mu2, sigma1, sigma2, rho, eos_logit], axis=2)
 
     def get_config(self):
         config = super().get_config()
@@ -155,22 +160,29 @@ def mdn_loss(y_true, y_pred, stroke_lengths, num_components, eps=1e-8):
 
     x, y, eos_targets = tf.split(y_true, [1, 1, 1], axis=-1)
 
-    sigma1 = tf.clip_by_value(sigma1, 1e-3, 1e5)
-    sigma2 = tf.clip_by_value(sigma2, 1e-3, 1e7)
-    rho = tf.clip_by_value(rho, -0.95, 0.95)
+    # Clip all components before processing with wider minimums and more conservative bounds
+    sigma1 = tf.clip_by_value(sigma1, 1e-2, 10.0)  # Wider minimum
+    sigma2 = tf.clip_by_value(sigma2, 1e-2, 10.0)
+    rho = tf.clip_by_value(rho, -0.9, 0.9)  # More conservative
+
+    # Ensure out_pi has minimum values
+    out_pi = tf.clip_by_value(out_pi, eps, 1.0)
 
     log_2pi = tf.constant(np.log(2.0 * np.pi), dtype=y_pred.dtype)
-    one_minus_rho2 = 1.0 - tf.square(rho)
+    # Add stability to log_one_minus_rho2
+    one_minus_rho2 = tf.clip_by_value(1.0 - tf.square(rho), eps, 2.0)
     log_one_minus_rho2 = tf.math.log(one_minus_rho2)
     z1 = (x - mu1) / sigma1
     z2 = (y - mu2) / sigma2
 
     quad = tf.square(z1) + tf.square(z2) - 2.0 * rho * z1 * z2
+    # Clip the quadratic term to prevent explosion
+    quad = tf.clip_by_value(quad, 0.0, 100.0)  # Prevent explosion
     log_norm = -(log_2pi + tf.math.log(sigma1) + tf.math.log(sigma2) + 0.5 * log_one_minus_rho2)
     log_gauss = log_norm - 0.5 * quad / one_minus_rho2  # [B, T, K]
 
-    # log mixture via log-sum-exp
-    log_pi = tf.math.log(tf.clip_by_value(out_pi, eps, 1.0))  # [B, T, K]
+    # log mixture via log-sum-exp (out_pi already clipped above)
+    log_pi = tf.math.log(out_pi)  # [B, T, K]
     log_gmm = tf.reduce_logsumexp(log_pi + log_gauss, axis=-1)  # [B, T]
 
     # bce (bernoulli cross entropy) to help out with stability

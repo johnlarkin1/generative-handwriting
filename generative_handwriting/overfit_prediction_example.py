@@ -289,7 +289,9 @@ def main() -> None:
     inputs, targets, lengths = prepare_training_tensors(dataset, batch_size=64)
     print(f"Training tensor shape: {inputs.shape}")
 
-    model = build_prediction_model(num_components=1)
+    num_components = 1
+
+    model = build_prediction_model(num_components=num_components)
 
     train_batch_size = 16
     train_ds = (
@@ -302,7 +304,6 @@ def main() -> None:
     history = model.fit(
         train_ds,
         epochs=400,
-        verbose=0,
     )
 
     print(f"Initial loss: {history.history['loss'][0]:.6f}")
@@ -313,7 +314,7 @@ def main() -> None:
     model.save(model_path)
     print(f"Saved overfitted model to {model_path}")
 
-    sample = greedy_autoregressive_sample(model, dataset, num_components=20)
+    sample = greedy_autoregressive_sample(model, dataset, num_components=num_components)
 
     # Visualise targets vs generated output
     target_coords = np.zeros_like(dataset.deltas)

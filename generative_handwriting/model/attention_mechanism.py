@@ -41,12 +41,12 @@ class AttentionMechanism(tf.keras.layers.Layer):
         #   exp(-2.5) ≈ 0.082
         # which is kinda close to what svasquez had
         # with his static / 25
-        self.kappa_scale = self.add_weight(
-            name="kappa_scale",
-            shape=(),
-            initializer=tf.keras.initializers.Constant(-2.5),
-            trainable=True,
-        )
+        # self.kappa_scale = self.add_weight(
+        #     name="kappa_scale",
+        #     shape=(),
+        #     initializer=tf.keras.initializers.Constant(-2.5),
+        #     trainable=True,
+        # )
         super().build(input_shape)
 
     def call(
@@ -59,12 +59,21 @@ class AttentionMechanism(tf.keras.layers.Layer):
         raw = self.dense_attention(inputs)
         alpha_hat, beta_hat, kappa_hat = tf.split(raw, 3, axis=1)  # shape: [batch_size, num_gaussians, 1]
 
-        # apply exp activation as in Graves eq. 48-51 with numerical safety
-        alpha = tf.exp(tf.clip_by_value(alpha_hat, -8.0, 8.0))
-        beta = tf.exp(tf.clip_by_value(beta_hat, -8.0, 8.0))
-        # e^(kappa_hat + kappa_scale) = e^(kappa_hat) * e^(kappa_scale)
-        delta_kappa = tf.exp(tf.clip_by_value(kappa_hat + self.kappa_scale, -8.0, 5.0))
-        kappa = prev_kappa + delta_kappa  # Eq. 51 cumulative monotonic
+        # Positivity with softplus; add eps to avoid exact zeros
+        eps = tf.constant(1e-6, dtype=inputs.dtype)
+        # Scale down the raw values before softplus for stability
+        scaling = 0.1  # Gentler activation
+        alpha = tf.nn.softplus(alpha_hat * scaling) + eps         # [B, G]
+        beta  = tf.nn.softplus(beta_hat * scaling)  + eps         # [B, G]
+        dkap  = tf.nn.softplus(kappa_hat * scaling) + eps
+
+        # Keep magnitudes sane (tune if needed)
+        alpha = tf.clip_by_value(alpha, 0.01, 10.0)     # Tighter amplitude cap
+        beta  = tf.clip_by_value(beta, 0.01, 10.0)      # Tighter precision cap
+        dkap  = tf.clip_by_value(dkap, 1e-4, 5.0)       # Tighter monotonic step cap
+
+        kappa = prev_kappa + dkap
+        kappa = tf.clip_by_value(kappa, 0.0, 200.0)     # total position cap
 
         char_len = tf.shape(char_seq_one_hot)[1]
         batch_size = tf.shape(inputs)[0]
@@ -79,7 +88,7 @@ class AttentionMechanism(tf.keras.layers.Layer):
 
         # phi - attention weights with numerical stability
         exponent = -beta * tf.square(kappa - u)
-        # Keep exponent non-positive and bounded (Gaussian exponent should be ≤ 0)
+        # Clip the Gaussian exponent more aggressively (keep current bounds)
         exponent = tf.clip_by_value(exponent, -50.0, 0.0)
         phi = alpha * tf.exp(exponent)  # shape: [batch_size, num_gaussians, char_len]
         phi = tf.reduce_sum(phi, axis=1)  # Sum over gaussians: [B, L]

@@ -48,10 +48,10 @@ def main():
 
         # Generate samples with different temperature/bias settings (following Graves 2013 recommendations)
         settings = [
-            ("default", 0.5, 0.4, False),      # Balanced settings
-            ("clean", 0.3, 0.6, True),         # High bias, low temp, greedy for clean output
-            ("creative", 0.7, 0.2, False),     # Higher temp, lower bias for variation
-            ("stable", 0.4, 0.5, True),        # Very conservative for legibility
+            ("default", 0.5, 0.4, False),  # Balanced settings
+            ("clean", 0.3, 0.6, True),  # High bias, low temp, greedy for clean output
+            ("creative", 0.7, 0.2, False),  # Higher temp, lower bias for variation
+            ("stable", 0.4, 0.5, True),  # Very conservative for legibility
         ]
 
         for style_name, temp, bias, greedy in settings:

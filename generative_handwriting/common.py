@@ -242,5 +242,3 @@ def print_model_parameters(model):
     trainable_params = np.sum([np.prod(v.shape.as_list()) for v in model.trainable_variables])
     print_title("Trainable parameter count:")
     print(trainable_params)
-
-

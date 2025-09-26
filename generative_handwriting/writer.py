@@ -5,13 +5,14 @@ from typing import List, Optional, Tuple
 import numpy as np
 import svgwrite
 import tensorflow as tf
-from alphabet import encode_ascii
-from constants import MAX_CHAR_LEN
-from model.attention_mechanism import AttentionMechanism
-from model.attention_rnn_cell import AttentionRNNCell
-from model.handwriting_models import DeepHandwritingSynthesisModel
-from model.mixture_density_network import MixtureDensityLayer, mdn_loss
-from model_io import load_model_if_exists
+from .alphabet import encode_ascii
+from .constants import MAX_CHAR_LEN
+from .model.attention_mechanism import AttentionMechanism
+from .model.attention_rnn_cell import AttentionRNNCell
+from .model.handwriting_models import DeepHandwritingSynthesisModel
+from .model.mixture_density_network import MixtureDensityLayer, mdn_loss
+from .model_io import load_model_if_exists, load_model_robustly
+from .learning_rate_schedules import WarmupExponentialDecay
 
 
 class Calligrapher:
@@ -57,9 +58,11 @@ class Calligrapher:
         self.sigma_max = sigma_max
         self.rho_max = rho_max
 
-        # Load normalization statistics if provided
-        self.norm_mu = np.array([0.0, 0.0])  # Default: no normalization
-        self.norm_sigma = np.array([1.0, 1.0])  # Default: no scaling
+        # Use reference implementation approach: median unit norm
+        # Based on reference code, no explicit normalization stats needed
+        # The model should handle normalized offsets directly
+        self.norm_mu = np.array([0.0, 0.0])  # No offset needed
+        self.norm_sigma = np.array([1.0, 1.0])  # Unit scale (model expects normalized input)
 
         if norm_stats_path and os.path.exists(norm_stats_path):
             try:
@@ -70,10 +73,10 @@ class Calligrapher:
                     print(f"Loaded normalization stats: μ={self.norm_mu}, σ={self.norm_sigma}")
             except Exception as e:
                 print(f"Warning: Could not load norm stats from {norm_stats_path}: {e}")
-                print("Using default normalization (no scaling)")
+                print("Using reference-style normalization (median unit norm compatible)")
 
-        # Load the model with custom objects
-        self.model, self.loaded = load_model_if_exists(
+        # Load the model with robust materialization and validation
+        self.model, self.loaded = load_model_robustly(
             model_path,
             custom_objects={
                 "mdn_loss": mdn_loss,
@@ -81,10 +84,17 @@ class Calligrapher:
                 "AttentionRNNCell": AttentionRNNCell,
                 "MixtureDensityLayer": MixtureDensityLayer,
                 "DeepHandwritingSynthesisModel": DeepHandwritingSynthesisModel,
+                "WarmupExponentialDecay": WarmupExponentialDecay,
             },
+            require_lstm=True,
+            require_attention=True,
         )
         if not self.loaded:
-            raise ValueError(f"Model could not be loaded from {model_path}")
+            raise ValueError(
+                f"Model could not be loaded from {model_path}. "
+                "This may be due to missing LSTM/attention parameters. "
+                "Please retrain using the fixed training scripts."
+            )
 
     def sample_gaussian_2d(self, mu1: float, mu2: float, s1: float, s2: float, rho: float) -> Tuple[float, float]:
         """Sample a point from a 2D Gaussian using the reparameterization trick.
@@ -225,7 +235,7 @@ class Calligrapher:
         state_list.extend([init["kappa"], init["w"]])
 
         # (dx, dy, pen_up=0 to start writing)
-        x_prev = tf.constant(np.tile([[0.0, 0.0, 0.0]], (B, 1)), dtype=tf.float32)
+        x_prev = tf.constant(np.tile([[0.0, 0.0, 1.0]], (B, 1)), dtype=tf.float32)
 
         K = self.num_output_mixtures
         sequences: List[List[Tuple[float, float, float]]] = [[] for _ in range(B)]

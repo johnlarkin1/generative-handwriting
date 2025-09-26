@@ -3,7 +3,6 @@ from typing import Tuple
 import tensorflow as tf
 
 
-
 class LSTMPeepholeCell(tf.keras.layers.Layer):
     def __init__(
         self,

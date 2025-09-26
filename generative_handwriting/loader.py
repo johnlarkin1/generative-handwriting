@@ -253,10 +253,6 @@ class HandwritingDataLoader:
             offsets = drawing.coords_to_offsets(coords)
             offsets = offsets[:MAX_STROKE_LEN]
             offsets = drawing.normalize(offsets)
-
-            # Note: Extreme coordinate files are now excluded at the file level
-            # so this quality filtering is no longer needed
-
             return offsets, len(offsets)
         except ET.ParseError as e:
             print(f"Error parsing XML file: {filename}")
@@ -411,9 +407,7 @@ class HandwritingDataLoader:
 
 
 if __name__ == "__main__":
-    loader = HandwritingDataLoader(
-        blacklist_path="generative_handwriting/data/blacklist.npy"
-    )
+    loader = HandwritingDataLoader(blacklist_path="generative_handwriting/data/blacklist.npy")
     loader.load_and_save_data()
     loader.prepare_data()
     # loader._parse_transcription(

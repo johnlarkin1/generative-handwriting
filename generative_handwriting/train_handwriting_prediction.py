@@ -197,9 +197,11 @@ if __name__ == "__main__":
     def simple_check_data_batch(batch_data, step):
         """Simple NaN check for batch data."""
         for key, tensor in batch_data.items():
-            if tf.reduce_any(tf.math.is_nan(tensor)) or tf.reduce_any(tf.math.is_inf(tensor)):
-                print(f"⚠️ NaN/Inf found in {key} at step {step}")
-                return True
+            # Only check floating point tensors for NaN/Inf
+            if tensor.dtype in [tf.float32, tf.float64, tf.float16]:
+                if tf.reduce_any(tf.math.is_nan(tensor)) or tf.reduce_any(tf.math.is_inf(tensor)):
+                    print(f"⚠️ NaN/Inf found in {key} at step {step}")
+                    return True
         return False
 
     if not model_loaded:

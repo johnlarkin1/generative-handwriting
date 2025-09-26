@@ -105,12 +105,21 @@ class DeepHandwritingPredictionModel(tf.keras.Model):
 
         with tf.GradientTape() as tape:
             y_pred = self(x, training=True)
+            # Runtime debugging assertions
+            tf.debugging.assert_all_finite(y_pred, "NaN/Inf in model predictions")
             nll = mdn_loss(y, y_pred, lengths, self.num_mixture_components)
             # todo: @larkin - look at regularization?
             loss = nll
+            tf.debugging.assert_all_finite(loss, "NaN/Inf in loss")
 
         gradients = tape.gradient(loss, self.trainable_variables)
-        self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
+        # Filter None gradients and check for NaN/Inf
+        grads_vars = []
+        for g, v in zip(gradients, self.trainable_variables):
+            if g is not None:
+                tf.debugging.assert_all_finite(g, f"NaN/Inf in gradient for {v.name}")
+                grads_vars.append((g, v))
+        self.optimizer.apply_gradients(grads_vars)
         self.nll_tracker.update_state(nll)
         self.loss_tracker.update_state(loss)
 
@@ -217,12 +226,21 @@ class DeepHandwritingSynthesisModel(tf.keras.Model):
         target_stroke_lens = inputs["target_stroke_lens"]
         with tf.GradientTape() as tape:
             y_pred = self(inputs, training=True)
+            # Runtime debugging assertions
+            tf.debugging.assert_all_finite(y_pred, "NaN/Inf in model predictions")
             nll = mdn_loss(y_true, y_pred, target_stroke_lens, self.num_mixture_components)
             reg = tf.add_n(self.losses) if self.losses else 0.0
             loss = nll + reg
+            tf.debugging.assert_all_finite(loss, "NaN/Inf in loss")
 
         gradients = tape.gradient(loss, self.trainable_variables)
-        self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
+        # Filter None gradients and check for NaN/Inf
+        grads_vars = []
+        for g, v in zip(gradients, self.trainable_variables):
+            if g is not None:
+                tf.debugging.assert_all_finite(g, f"NaN/Inf in gradient for {v.name}")
+                grads_vars.append((g, v))
+        self.optimizer.apply_gradients(grads_vars)
 
         eos_logits = y_pred[:, :, -1]  # Last column contains EOS logits
         eos_probs = tf.sigmoid(eos_logits)
@@ -245,6 +263,44 @@ class DeepHandwritingSynthesisModel(tf.keras.Model):
             "nll": self.nll_tracker.result(),
             "eos_accuracy": self.eos_accuracy_tracker.result(),
             "eos_prob": self.eos_prob_tracker.result(),
+        }
+
+    def test_step(self, data: Tuple[Dict[str, tf.Tensor], tf.Tensor]) -> Dict[str, tf.Tensor]:
+        """Override test_step for validation data."""
+        inputs, y_true = data
+        target_stroke_lens = inputs["target_stroke_lens"]
+
+        # Forward pass (no gradient tape needed for validation)
+        y_pred = self(inputs, training=False)
+
+        # Compute loss
+        nll = mdn_loss(y_true, y_pred, target_stroke_lens, self.num_mixture_components)
+        reg = tf.add_n(self.losses) if self.losses else 0.0
+        loss = nll + reg
+
+        # Compute EOS metrics
+        eos_logits = y_pred[:, :, -1]
+        eos_probs = tf.sigmoid(eos_logits)
+        eos_predictions = tf.round(eos_probs)
+        eos_targets = y_true[:, :, 2]
+
+        mask = tf.sequence_mask(target_stroke_lens, maxlen=tf.shape(y_true)[1], dtype=tf.float32)
+        masked_correct = tf.cast(tf.equal(eos_predictions, eos_targets), tf.float32) * mask
+        eos_accuracy = tf.reduce_sum(masked_correct) / tf.maximum(tf.reduce_sum(mask), 1.0)
+        mean_eos_prob = tf.reduce_sum(eos_probs * mask) / tf.maximum(tf.reduce_sum(mask), 1.0)
+
+        # Update validation metrics
+        self.nll_tracker.update_state(nll)
+        self.loss_tracker.update_state(loss)
+        self.eos_accuracy_tracker.update_state(eos_accuracy)
+        self.eos_prob_tracker.update_state(mean_eos_prob)
+
+        # Return metrics for validation
+        return {
+            "loss": loss,
+            "nll": nll,
+            "eos_accuracy": eos_accuracy,
+            "eos_prob": mean_eos_prob,
         }
 
     def build(self, inputs_by_name_shape: Union[Dict[str, Tuple[int, ...]], Tuple[int, ...]]) -> None:

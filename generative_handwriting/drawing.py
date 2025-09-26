@@ -17,10 +17,7 @@ def align(coords):
     X = np.concatenate([np.ones([X.shape[0], 1]), X], axis=1)
     offset, slope = np.linalg.inv(X.T.dot(X)).dot(X.T).dot(Y).squeeze()
     theta = np.arctan(slope)
-    rotation_matrix = np.array(
-        [[np.cos(theta), -np.sin(theta)],
-         [np.sin(theta), np.cos(theta)]]
-    )
+    rotation_matrix = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
     coords[:, :2] = np.dot(coords[:, :2], rotation_matrix) - offset
     return coords
 
@@ -76,12 +73,14 @@ def interpolate(coords, factor=2):
     return coords
 
 
-def normalize(offsets):
+def normalize(offsets, eps=1e-3):
     """
     normalizes strokes to median unit norm
     """
     offsets = np.copy(offsets)
-    offsets[:, :2] /= np.median(np.linalg.norm(offsets[:, :2], axis=1))
+    norms = np.linalg.norm(offsets[:, :2], axis=1)
+    scale = max(np.median(norms), eps)
+    offsets[:, :2] /= scale
     return offsets
 
 

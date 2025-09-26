@@ -16,6 +16,7 @@ from generative_handwriting.callbacks import ExtendedModelCheckpoint, PrintModel
 from generative_handwriting.loader import HandwritingDataLoader
 from generative_handwriting.model.handwriting_models import DeepHandwritingSynthesisModel
 from generative_handwriting.model.mixture_density_network import mdn_loss
+from generative_handwriting.model_io import save_model_robustly
 
 # We want this to ensure CPU <-> GPU compatibility
 tf.keras.mixed_precision.set_global_policy("float32")
@@ -228,7 +229,7 @@ if __name__ == "__main__":
         ),
         loss=None,  # Correct when overriding train_step
         run_eagerly=False,
-        jit_compile=True,
+        jit_compile=False,   # <- turn off XLA here
     )
 
     val_chars = data_loader.validation_transcriptions
@@ -242,5 +243,12 @@ if __name__ == "__main__":
     ]
 
     history = stroke_model.fit(dataset, epochs=desired_epochs, callbacks=callbacks)
-    stroke_model.save(model_save_path_final)
-    print("Training completed.")
+
+    # Save final model with robust materialization and validation
+    print("💾 Saving final model with materialization...")
+    save_success = save_model_robustly(stroke_model, model_save_path_final)
+    if save_success:
+        print("✅ Training completed successfully!")
+    else:
+        print("❌ Training completed but model save failed!")
+        print("⚠️ Check the error messages above for details")
